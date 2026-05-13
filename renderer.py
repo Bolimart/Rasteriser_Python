@@ -11,7 +11,6 @@ from viewport import *
 def swap (x0, x1):
     return x1, x0
 
-
 def lerp(i0, d0, i1, d1):
     i0 = np.int64(i0)
     i1 = np.int64(i1)
@@ -42,11 +41,12 @@ def draw_triangle_dot(triangle, image):
         draw_line(line, [1, 1, 1], image)
 
 
-def draw_triangle(triangle, image):
+def draw_triangle(triangle, image, data_buffer):
+    
     # This one is way more optimized, but less straight forward
-    x0, y0 = triangle.P0
-    x1, y1 = triangle.P1
-    x2, y2 = triangle.P2
+    x0, y0, depth0 = triangle.P0
+    x1, y1, depth1 = triangle.P1
+    x2, y2, depth2 = triangle.P2
 
     # 1 - Sort the points so that y0 <= y1 <= y2
     if y1 < y0:
@@ -85,7 +85,16 @@ def draw_triangle(triangle, image):
     y2 = np.int64(y2)
     for y in range(y0, y2):
         for x in range(x_left[y - y0], x_right[y - y0]):
+            if x < 0 or x >= len(image) or y < 0 or y >= len(image[0]):
+                continue
             image[y, x] = triangle.color
+
+
+def draw_wireframe_triangle(triangle: Triangle, image):
+    l = triangle.lines()
+    draw_line(l[0], triangle.color, image)
+    draw_line(l[1], triangle.color, image)
+    draw_line(l[2], triangle.color, image)
 
 
 def draw_line(line, color, image):
@@ -115,83 +124,63 @@ def draw_line(line, color, image):
 
 # =====[ Projections ]=====
 
-def orthogonal_projection(triangle: Triangle, camera: Camera, width, height):
-    def project(P):
-        # Move P into camera-relative space
-        local = P - camera.pos
-
-        # Project onto the camera plane axes
-        u = np.dot(local, camera.u) * camera.d
-        v = np.dot(local, camera.v) * camera.d
-
-        # Convert to screen coordinates (center of image = origin)
-        sx = width  / 2 + u * width  / 2
-        sy = height / 2 - v * height / 2  # flip Y for image space
-
-        return Point2D(sx, sy)
-
-    P0 = project(triangle.P0)
-    P1 = project(triangle.P1)
-    P2 = project(triangle.P2)
-    return Triangle(P0, P1, P2, triangle.color)
-
 def perspective_projection(triangle: Triangle, camera: Camera, width, height):
-    def project(P):
-        # Move P into camera-relative space
-        local = P - camera.pos
+    def viewport_to_canvas(x, y, z):
+        cx = width / 2 + x * (width / camera.width)
+        cy = height / 2 - y * (height / camera.height)  # flip Y so +Y is up
+        depth = np.linalg.norm(Point3D(x, y, z) - camera.pos)
+        return Point3D(cx, cy, depth)
+    
+    def project_vertex(v):
+        return viewport_to_canvas(v[0] * (camera.d / v[2]), v[1] * (camera.d / v[2]), v[2])
 
-        # Perspective divide by depth (Z)
-        depth = np.dot(local, camera.normal)
-        if abs(depth) < 1e-6:
-            depth = 1e-6  # avoid division by zero
-
-        # Project onto the camera plane axes
-        u = np.dot(local, camera.u) * camera.d / depth
-        v = np.dot(local, camera.v) * camera.d / depth
-
-        # Convert to screen coordinates (center of image = origin)
-        sx = max(min(width  / 2 + u * width  / 2, width - 1), 0)
-        sy = max(min(height / 2 - v * height / 2, height - 1), 0)  # flip Y for image space
-
-        return Point2D(sx, sy)
-
-    P0 = project(triangle.P0)
-    P1 = project(triangle.P1)
-    P2 = project(triangle.P2)
+    P0 = project_vertex(triangle.P0)
+    P1 = project_vertex(triangle.P1)
+    P2 = project_vertex(triangle.P2)
+    
     return Triangle(P0, P1, P2, triangle.color)
 
 # =====[ Render ]=====
 
-def render_instance(instance, image):
+def render_wireframe_instance(instance:Instance, viewport: Viewport, image, width, height):
     projected = []
-    for v in instance.model.vertices:
-        V = (v * instance.scale) + instance.pos
+    for t in instance.apply_transform():
+        projected.append(viewport.project_func(t, viewport.camera, width, height))
+    for T in projected:
+        draw_wireframe_triangle(T, image)
+    
 
+def render_instance(instance:Instance, viewport: Viewport, image, data_buffer, width, height):
+    projected = []
+    for t in instance.apply_transform():
+        if viewport.camera.in_view(t):
+            projected.append(viewport.project_func(t, viewport.camera, width, height))
+    for t in instance.apply_transform()[8:10]:
+        normal = t.get_normal()
+        to_camera = viewport.camera.pos - t.P0
+        dot = np.dot(normal, to_camera)
+        viewport.camera.in_view(t, True)
+    for T in projected:
+        to_camera = viewport.camera.pos - T.P0
+        print(T.P0, T.P1, T.P2, T.normal)
+        draw_triangle(T, image, data_buffer)
 
 
 def render(viewport:Viewport, width, height):
 
     image = numpy.zeros((height, width, 3))
+    data_buffer = numpy.zeros((height, width, 4))
 
-    triangles = viewport.project(width, height)
-    for triangle in triangles:
-        draw_triangle(triangle, image)
+    for instance in viewport.objects:
+        render_instance(instance, viewport, image, data_buffer, width, height)
     
     return image
 
 
 def render_wireframe(viewport: Viewport, width, height):
     image = numpy.zeros((height, width, 3))
-
-    triangles = viewport.project(width, height)
-    for triangle in triangles:
-        for line in triangle.lines():
-            draw_line(line, triangle.color, image)
+    for instance in viewport.objects:
+        render_wireframe_instance(instance, viewport, image, width, height)
+        
 
     return image
-
-
-if __name__ == '__main__':
-    from matplotlib import pyplot
-
-    pyplot.imsave("image.png", render(None, 40, 40))
