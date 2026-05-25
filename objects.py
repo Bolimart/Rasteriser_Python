@@ -29,7 +29,7 @@ class Line:
 
 class Triangle:
     
-    def __init__(self, P0, P1, P2, color):
+    def __init__(self, P0, P1, P2, color, normal=None):
         # Store the points
         self.P0 = P0
         self.P1 = P1
@@ -40,7 +40,10 @@ class Triangle:
         self.V2 = P0 - P2
 
         self.color = color
-        self.normal = self.get_normal()
+        if normal is None:
+            self.normal = self.get_normal()
+        else:
+            self.normal = normal
         
     def is_point_inside(self, P):
         # Use the dot product to determine whether a point is inside the triangle
