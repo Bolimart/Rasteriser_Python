@@ -1,4 +1,5 @@
 import numpy as np
+from materials import Material
 
 
 def normalize(v):
@@ -29,11 +30,15 @@ class Line:
 
 class Triangle:
     
-    def __init__(self, P0, P1, P2, color, normal=None):
+    def __init__(self, P0, P1, P2, color=[0, 0, 0], normal=None, P0_uv=[0, 0], P1_uv=[0, 1], P2_uv=[1, 1]):
         # Store the points
         self.P0 = P0
         self.P1 = P1
         self.P2 = P2
+        # Store the uv coordinates of each point
+        self.P0_uv = P0_uv
+        self.P1_uv = P1_uv
+        self.P2_uv = P2_uv
         # Store the vectors
         self.V0 = P1 - P0
         self.V1 = P2 - P1
@@ -108,32 +113,37 @@ class Cube(Model):
         ))
         v = self.vertices
         self.triangles = np.array((
-        # Front face (z-) — seen from -Z
-        Triangle(v[0], v[2], v[1], c),
-        Triangle(v[0], v[3], v[2], c),
-        # Back face (z+) — seen from +Z
-        Triangle(v[4], v[5], v[7], c),
-        Triangle(v[7], v[5], v[6], c),
-        # Left face (x-) — seen from -X
-        Triangle(v[0], v[4], v[3], c),
-        Triangle(v[7], v[3], v[4], c),
-        # Right face (x+) — seen from +X
-        Triangle(v[1], v[6], v[5], c),
-        Triangle(v[1], v[2], v[6], c),
-        # Bottom face (y-) — seen from -Y
-        Triangle(v[4], v[1], v[5], c),
-        Triangle(v[4], v[0], v[1], c),
-        # Top face (y+) — seen from +Y
-        Triangle(v[3], v[6], v[2], c),
-        Triangle(v[3], v[7], v[6], c),
-        ))
+    # Front face (z-)
+    Triangle(v[0], v[2], v[1], P0_uv=[0,0], P1_uv=[1,1], P2_uv=[1,0], color=c),
+    Triangle(v[0], v[3], v[2], P0_uv=[0,0], P1_uv=[0,1], P2_uv=[1,1], color=c),
+    # Back face (z+)
+    Triangle(v[4], v[5], v[7], P0_uv=[0,0], P1_uv=[1,0], P2_uv=[0,1], color=c),
+    Triangle(v[7], v[5], v[6], P0_uv=[0,1], P1_uv=[1,0], P2_uv=[1,1], color=c),
+    # Left face (x-)
+    Triangle(v[0], v[4], v[3], P0_uv=[0,0], P1_uv=[1,0], P2_uv=[0,1], color=c),
+    Triangle(v[7], v[3], v[4], P0_uv=[1,1], P1_uv=[0,1], P2_uv=[1,0], color=c),
+    # Right face (x+)
+    Triangle(v[1], v[6], v[5], P0_uv=[0,0], P1_uv=[1,1], P2_uv=[1,0], color=c),
+    Triangle(v[1], v[2], v[6], P0_uv=[0,0], P1_uv=[0,1], P2_uv=[1,1], color=c),
+    # Bottom face (y-)
+    Triangle(v[4], v[1], v[5], P0_uv=[0,0], P1_uv=[1,1], P2_uv=[1,0], color=c),
+    Triangle(v[4], v[0], v[1], P0_uv=[0,0], P1_uv=[0,1], P2_uv=[1,1], color=c),
+    # Top face (y+)
+    Triangle(v[3], v[6], v[2], P0_uv=[0,0], P1_uv=[1,1], P2_uv=[1,0], color=c),
+    Triangle(v[3], v[7], v[6], P0_uv=[0,0], P1_uv=[0,1], P2_uv=[1,1], color=c),
+))
 
 
 class Instance:
 
-    def __init__(self, model: Model, transform: Transform):
+    def __init__(self, model: Model, transform: Transform, materials: list[Material] = None):
         self.model = model
         self.transform = transform
+        self.materials = materials
+        
+        
+    def get_pixel_color(depth, normal, uv_coord, screen_coord):
+        pass
         
     
     def apply_transform(self):
@@ -150,7 +160,7 @@ class Instance:
         P0 = (t.P0 * self.transform.scale)
         P1 = (t.P1 * self.transform.scale)
         P2 = (t.P2 * self.transform.scale)
-        return Triangle(P0, P1, P2, t.color)
+        return Triangle(P0, P1, P2, t.color, P0_uv=t.P0_uv, P1_uv=t.P1_uv, P2_uv=t.P2_uv)
        
     def rotate(self, t):
         def rotate_vertex(v):
@@ -180,11 +190,11 @@ class Instance:
         P0 = rotate_vertex(t.P0)
         P1 = rotate_vertex(t.P1)
         P2 = rotate_vertex(t.P2)
-        return Triangle(P0, P1, P2, t.color)
+        return Triangle(P0, P1, P2, t.color, P0_uv=t.P0_uv, P1_uv=t.P1_uv, P2_uv=t.P2_uv)
     
     def translate(self, t):
         P0 = t.P0 + self.transform.pos
         P1 = t.P1 + self.transform.pos
         P2 = t.P2 + self.transform.pos
-        return Triangle(P0, P1, P2, t.color)
+        return Triangle(P0, P1, P2, t.color, P0_uv=t.P0_uv, P1_uv=t.P1_uv, P2_uv=t.P2_uv)
         
