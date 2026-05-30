@@ -1,17 +1,9 @@
 import numpy as np
-from materials import Material
+from materials import *
 
 
 def normalize(v):
     return v / np.linalg.norm(v)
-
-
-def left_normal(v):
-    return normalize(np.array([-v[1], v[0]]))
-
-
-def right_normal(v):
-    return normalize(np.array([v[1], -v[0]]))
 
 
 def Point2D(x, y):
@@ -49,20 +41,6 @@ class Triangle:
             self.normal = self.get_normal()
         else:
             self.normal = normal
-        
-    def is_point_inside(self, P):
-        # Use the dot product to determine whether a point is inside the triangle
-        P0_to_P = P - self.P0
-        P1_to_P = P - self.P1
-        P2_to_P = P - self.P2
-        N0 = left_normal(self.V0)
-        N1 = left_normal(self.V1)
-        N2 = left_normal(self.V2)
-
-        if np.dot(P0_to_P, N0) < 0 and np.dot(P1_to_P, N1) < 0 and np.dot(P2_to_P, N2) < 0:
-            return True
-        else:
-            return False
 
     def lines(self):
         # Store the lines
@@ -77,6 +55,7 @@ class Triangle:
         B = np.array(self.P2) - np.array(self.P0)
         
         return normalize(np.cross(A, B))
+
 
 class Model:
 
@@ -136,14 +115,10 @@ class Cube(Model):
 
 class Instance:
 
-    def __init__(self, model: Model, transform: Transform, materials: list[Material] = None):
+    def __init__(self, model: Model, transform: Transform, material=Material()):
         self.model = model
         self.transform = transform
-        self.materials = materials
-        
-        
-    def get_pixel_color(depth, normal, uv_coord, screen_coord):
-        pass
+        self.mat = material
         
     
     def apply_transform(self):
@@ -197,4 +172,36 @@ class Instance:
         P1 = t.P1 + self.transform.pos
         P2 = t.P2 + self.transform.pos
         return Triangle(P0, P1, P2, t.color, P0_uv=t.P0_uv, P1_uv=t.P1_uv, P2_uv=t.P2_uv)
+    
+
+class Light:
+    
+    def __init__(self, color, pos, intensity):
+        self.color = color
+        self.pos = pos
+        self.intensity = intensity
         
+    def light_angle(self):
+        return True
+
+# TODO: Cone light
+
+class Atlas:
+    
+    def __init__(self, texture):
+        if texture.dtype == np.uint8:
+            h, w = texture.shape[:2]
+            for y in range(h):
+                for x in range(w): # Might be not rotated like I want
+                    texture[y, x] == texture[y, x] / 255
+        self.texture = texture
+        
+    def sample(self, u, v):
+        h, w = self.texture.shape[:2]
+        # Clamp u, v to [0, 1]
+        u = min(max(u, 0), 1)
+        v = min(max(v, 0), 1)
+        # Convert to pixel coordinates
+        tx = int(u * (w - 1))
+        ty = int((1 - v) * (h - 1))  # flip V so (0,0) is bottom-left
+        return np.clip(self.texture[ty, tx] / 255, 0, 1)

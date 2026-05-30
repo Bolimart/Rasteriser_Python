@@ -97,7 +97,7 @@ def draw_triangle(triangle, data_buffer,  view_dist, mat_id):
         ul, ur = u_left[i], u_right[i]
         vl, vr = v_left[i], v_right[i]
         
-        for x in range(x_left[y - y0], x_right[y - y0]):
+        for x in range(xl, xr):
             
             # Don't draw if the pixel is out of the screen
             if x < 0 or x >= width or y < 0 or y >= height:
@@ -115,11 +115,16 @@ def draw_triangle(triangle, data_buffer,  view_dist, mat_id):
             if data_buffer[y, x, 3] >= inv_depth:
                 continue
             
-            data_buffer[y, x, 0:3] = (triangle.normal.all() + 1) * 0.5  # world-space normal (xyz)
+            normal = [
+                (triangle.normal[0] + 1) * 0.5,
+                (triangle.normal[1] + 1) * 0.5,
+                (triangle.normal[2] + 1) * 0.5                
+            ]
+            
+            data_buffer[y, x, 0:3] = normal  # world-space normal (xyz)
             data_buffer[y, x, 3] = inv_depth                            # 1/z
             data_buffer[y, x, 4:6] = [u, v]                             # uv coordinates
-            data_buffer[y, x, 6:8] = [y, x]                             # screen coordinate
-            data_buffer[y, x, 8] = mat_id                               # material ID                
+            data_buffer[y, x, 6] = mat_id                               # material ID                
             
 
 
@@ -154,6 +159,26 @@ def draw_line(line, color, image):
         for y in range(y0, y1 + 1):
             if 0 <= y < h and 0 <= xs[y - y0] < w:
                 image[y, xs[y - y0]] = color
+                
+
+def draw_pixel(material, image, data_buffer, x, y, camera):
+    c = np.zeros(4)
+    blend = (material.id >> 0) & 0x3
+    if blend == BLEND_OPAQUE:
+        image[x, y] = material.get_pixel(image, data_buffer, x, y, camera) # Get the material color
+    elif blend == BLEND_ALPHA:
+        c = np.array(material.get_pixel(image, data_buffer, x, y, camera), dtype=float)
+        image[x, y] = image[x, y] * (1 - c[3]) + c[:3] * c[3]
+    elif blend == BLEND_ADDITIVE:
+        c[:3] = material.get_pixel(image, data_buffer, x, y, camera)
+        print(c)
+        image[x, y] = np.clip(image[x, y] + c[:3], 0, 1)
+    elif blend == BLEND_MULTIPLY:
+        c[:3] = material.get_pixel(image, data_buffer, x, y, camera)
+        image[x, y] = np.clip(image[x, y] * c[:3], 0, 1) 
+                        
+    
+
 
 # =====[ Projections ]=====
 
@@ -194,16 +219,32 @@ def render_instance(instance:Instance, viewport: Viewport, data_buffer,  width, 
             if T is not None:
                 projected.append(T)
     for T in projected:
-        draw_triangle(T, data_buffer,  view_dist)
+        draw_triangle(T, data_buffer,  view_dist, instance.mat.id)
 
 
-def render(viewport:Viewport, width, height, view_dist):
+def render(viewport:Viewport, width, height, view_dist, post_process=[]):
 
+    materials = MaterialRegistry()
     image = numpy.zeros((height, width, 3))
-    data_buffer = numpy.zeros((height, width, 9))
+    data_buffer = numpy.zeros((height, width, 7))
 
     for instance in viewport.objects:
-        render_instance(instance, viewport, image, data_buffer, width, height, view_dist)
+        materials.register(instance.mat)
+        render_instance(instance, viewport, data_buffer, width, height, view_dist)
+    
+    for x in range(len(data_buffer)):
+        for y in range(len(data_buffer[0])):
+            material_data = int(data_buffer[x, y, 6])
+            if material_data != 0:
+                for i in range(material_data.bit_length()//16 + 1):
+                    material_id = material_data >> 16 * i
+                    material = materials.get(material_id)
+                    draw_pixel(material, image, data_buffer, x, y, viewport.camera)
+    
+    for x in range(len(data_buffer)):
+        for y in range(len(data_buffer[0])):
+            for pp in post_process:
+                draw_pixel(pp, image, data_buffer, x, y, viewport.camera)
     
     return image, data_buffer
 
