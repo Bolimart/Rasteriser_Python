@@ -53,10 +53,9 @@ def load_obj(obj_path, colour=[1, 1, 1], smooth_shading: bool=True) -> list:
             #Accept only these instruction : v, vn, vt, f, o, and g
             if line[:2] in ['vt', 'vn'] or line[0] in ['o', 'f', 'v', 'g']:
                 lines.append(line)
-                print(line)
 
-        new_object = lambda : {'vertices': [], 'groups': [], 'faces': []}
-        new_group = lambda : {'vertices': [], 'faces': []}
+        new_object = lambda: {'vertices': [], 'groups': [], 'faces': []}
+        new_group = lambda: {'vertices': [], 'faces': []}
 
         objects = [new_group()]
         object_num = 0
@@ -72,13 +71,11 @@ def load_obj(obj_path, colour=[1, 1, 1], smooth_shading: bool=True) -> list:
                 group_num = 0
                 in_group = False
                 objects.append(new_object())
-                print(f'Object {line.split()[1]} found.')
             elif line[0] == 'g':
                 group_num += 1
-                in_group = False
+                in_group = True
                 objects[object_num]['group'].append(new_group())
-                print(f'Group {line.split()[1]} found.')
-            elif line[0] == 'v':
+            elif line[:2] == 'v ':
                 point = Point3D(*map(np.float32, line.split()[1:]))
                 vertices.append(point)
                 if in_group:
@@ -91,28 +88,28 @@ def load_obj(obj_path, colour=[1, 1, 1], smooth_shading: bool=True) -> list:
             elif smooth_shading and line[:2] == 'vn':
                 point = Point3D(*map(np.float32, line.split()[1:]))
                 normals.append(point)
-            elif lines[0] == 'f':
+            elif line[0] == 'f':
                 vn = []
                 v = []
                 vt = []
-                data = line.split[1:]
+                data = line.split()[1:]
                 for p in data:
                     p = p.split('/')
-                    v.append(p[0])
+                    v.append(vertices[int(p[0]) - 1])
                     if p[1] != '':
-                        vt.append(p[1])
+                        vt.append(tex_coords[int(p[1]) - 1])
                     else:
                         vt.append(0)
                     if smooth_shading:
-                        vn.append(p[2])
+                        vn.append(normals[int(p[2]) - 1])
                 if smooth_shading:
                     face = Triangle(v[0], v[1], v[2], colour, vt[0], vt[1], vt[2], vn[0], vn[1], vn[2])
                 else:
-                    face = face = Triangle(v[0], v[1], v[2], colour, vt[0], vt[1], vt[2])
+                    face = Triangle(v[0], v[1], v[2], colour, vt[0], vt[1], vt[2])
                 if in_group:
-                    objects[object_num]['groups'][group_num]['vertices'].append(face)
+                    objects[object_num]['groups'][group_num]['faces'].append(face)
                 else:
-                    objects[object_num]['vertices'].append(face)
+                    objects[object_num]['faces'].append(face)
     return objects
 
 #——————————[ PRIMITIVES ]———————————————————————————————————————————————————————————————————————————————————————————————
@@ -201,8 +198,8 @@ class Triangle:
 
         :return: np.ndarray of shape (3,) — unit normal vector
         """
-        A = np.array(self.P1) - np.array(self.P0)
-        B = np.array(self.P2) - np.array(self.P0)
+        A = self.P1 - self.P0
+        B = self.P2 - self.P0
         return normalize(np.cross(A, B))
 
 #——————————[ MODEL ]————————————————————————————————————————————————————————————————————————————————————————————————————
@@ -311,11 +308,13 @@ class Cube(Model):
 
 #——————————[ INSTANCE ]—————————————————————————————————————————————————————————————————————————————————————————————————
 
-def make_instance(model: Model|list[Model], transform: Transform,  mat: Material|list[Material]) -> Instance:
-    if model is list:
-        return ComplexInstance(model, transform, mat)
-    else:
+def make_instance(model: list[Model], transform: Transform,  mat: Material|list[Material]) -> Instance:
+    if model is Model:
         return Instance(model, transform, mat)
+    elif len(model) == 1:
+        return Instance(model[0], transform, mat[0])
+    else:
+        return ComplexInstance(model, transform, mat)
 
 class Instance:
     """
@@ -444,10 +443,11 @@ class ComplexInstance(Instance):
         """
 
     def __init__(self, models: list[Model], transform: Transform, mats: list[Material]):
-        self.models = models
-        self.transform = transform
-        self.mats = mats
-        self.instances = [Instance(models[i], transform, mats[min(i, len(mats) - 1)]) for i in range(len(models))]
+        to_model = lambda model: Model(model['vertices'], model['faces'])
+        if type(mats) is not list:
+            self.instances = [Instance(to_model(models[i]), transform, mats) for i in range(len(models))]
+        else:
+            self.instances = [Instance(to_model(models[i]), transform, mats[min(i, len(mats) - 1)]) for i in range(len(models))]
 
 
     def apply_transform(self) -> list:

@@ -319,10 +319,6 @@ def perspective_projection(triangle: Triangle, camera: 'Camera', width: int, hei
     P1 = project_vertex(triangle.P1)
     P2 = project_vertex(triangle.P2)
 
-    # Discard degenerate triangles that project to a single point
-    if abs(P0 - P1).any() < 10e-3 and abs(P2 - P1).any() < 10e-3 and abs(P0 - P2).any() < 10e-3:
-        return None
-
     return Triangle(P0, P1, P2, triangle.colour, triangle.P0_uv, triangle.P1_uv, triangle.P2_uv, triangle.P0_n, triangle.P1_n, triangle.P2_n)
 
 #——————————[ RENDER ]————————————————————————————————————————————————————————————————————————————————————————————————————
@@ -398,8 +394,13 @@ def render(viewport: 'Viewport', width: int, height: int, view_dist: float, post
 
     # Pass 1 — Geometry: rasterise all instances into the G-buffer
     for instance in viewport.objects:
-        materials.register(instance.mat)
-        render_instance(instance, viewport, data_buffer, width, height, view_dist)
+        if type(instance) is ComplexInstance:
+            for inst in instance.instances:
+                materials.register(inst.mat)
+                render_instance(inst, viewport, data_buffer, width, height, view_dist)
+        else:
+            materials.register(instance.mat)
+            render_instance(instance, viewport, data_buffer, width, height, view_dist)
 
     # Pass 2 — Shading: resolve each pixel's material and shade it
     for x in range(len(data_buffer)):

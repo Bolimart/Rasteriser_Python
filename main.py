@@ -4,7 +4,8 @@ from time import time
 
 #——————————[ ASSETS ]————————————————————————————————————————————————————————————————————————————————————————————————————
 
-crate_atlas = Atlas(pyplot.imread("crate.png"))
+crate_atlas = Atlas(pyplot.imread("grid.png"))
+teapot = load_obj('models/utah_teapot_reso3.obj', smooth_shading=False)
 
 #——————————[ SCENE SETUP ]———————————————————————————————————————————————————————————————————————————————————————————————
 
@@ -35,17 +36,11 @@ crate_shader       = UnlitTexture(crate_atlas)
 
 # Scene objects
 objects = [
-    # Instance(cube, Transform(Point3D(0, 0, 3), Point3D(2, 2, 2), Point3D(0,  28,  13))),
-    # Instance(cube, Transform(Point3D(0, 0, 5), Point3D(4, 4, 4), Point3D(14, 180,  0))),
-    Instance(cube, Transform(Point3D( 0,  0,  2), Point3D(1,   1,   1), Point3D( 45, 45,  90)), crate_shader),
-    Instance(cube, Transform(Point3D( 0,  0,  2), Point3D(0.5, 0.5, 1), Point3D(  0, 25,  15)), blue_crate_shader),
-    Instance(cube, Transform(Point3D( 1,  2,  5), Point3D(2,   1,   1), Point3D(  0,  0,  45)), red_crate_shader),
-    Instance(cube, Transform(Point3D( 3, -2,  5), Point3D(1,   4,   1), Point3D( 15,  0,   0)), blue_crate_shader),
-    Instance(cube, Transform(Point3D(-10,-8, 20), Point3D(10, 10,  10), Point3D(-30, 90,  15)), crate_shader),
+    make_instance(teapot, Transform(Point3D(0, -1, 6), Point3D(1, 1, 1), Point3D(-110, 23, 0)), crate_shader)
 ]
 
 post_process = [
-    PPFog(800, [0, 0, 0]),  # black fog, fully opaque at distance 800
+    PPFog(1200, [0, 0, 0]),  # black fog, fully opaque at distance 800
 ]
 
 #——————————[ RENDER ]————————————————————————————————————————————————————————————————————————————————————————————————————
@@ -54,9 +49,9 @@ viewport = Viewport(objects, camera, perspective_projection)
 
 t = time()
 
-pyplot.imsave("img/image_wireframe.png", render_wireframe(viewport, 400, 400))
+pyplot.imsave("img/image_wireframe.png", render_wireframe(viewport, 1000, 1000))
 
-r, d_b = render(viewport, 400, 400, 500, post_process)
+r, d_b = render(viewport, 1000, 1000, 500, post_process)
 
 # Build a UV visualisation image from G-buffer channels 4 and 5
 uv = np.zeros((len(d_b), len(d_b[0]), 3))
