@@ -37,7 +37,7 @@ def Point3D(x: float, y: float, z: float) -> np.ndarray:
     """
     return np.array((x, y, z))
 
-def load_obj(obj_path) -> list:
+def load_obj(obj_path, colour=[1, 1, 1], smooth_shading: bool=True) -> list:
     with open(obj_path, "r") as model:
         lines = []
 
@@ -65,7 +65,6 @@ def load_obj(obj_path) -> list:
         vertices = []
         normals = []
         tex_coords = []
-        faces = []
 
         for line in lines:
             if line[0] == 'o':
@@ -74,44 +73,47 @@ def load_obj(obj_path) -> list:
                 in_group = False
                 objects.append(new_object())
                 print(f'Object {line.split()[1]} found.')
-            if line[0] == 'g':
+            elif line[0] == 'g':
                 group_num += 1
                 in_group = False
                 objects[object_num]['group'].append(new_group())
                 print(f'Group {line.split()[1]} found.')
-            if line[0] == 'v':
+            elif line[0] == 'v':
                 point = Point3D(*map(np.float32, line.split()[1:]))
                 vertices.append(point)
                 if in_group:
                     objects[object_num]['groups'][group_num]['vertices'].append(point)
                 else:
                     objects[object_num]['vertices'].append(point)
-            if line[:2] == 'vt':
+            elif line[:2] == 'vt':
                 point = Point2D(*map(np.float32, line.split()[1:]))
                 tex_coords.append(point)
-            if line[:2] == 'vn':
+            elif smooth_shading and line[:2] == 'vn':
                 point = Point3D(*map(np.float32, line.split()[1:]))
                 normals.append(point)
-            if lines[0] == 'f':
-                face_normals = []
-                face_vertices = []
-                face_tex_coords = []
+            elif lines[0] == 'f':
+                vn = []
+                v = []
+                vt = []
                 data = line.split[1:]
                 for p in data:
                     p = p.split('/')
-                    face_vertices.append(p[0])
+                    v.append(p[0])
                     if p[1] != '':
-                        face_tex_coords.append(p[1])
+                        vt.append(p[1])
                     else:
-                        face_tex_coords.append(0)
-                    face_normals.append(p[2])
-
-        # Todo: Get the verticies (start with 'v')
-        # Todo: Get the uv coordinates of each point (start with 'vt')
-        # Todo: Get the normal (start with 'vn')
-        # Todo: Get the face (start with 'f') wich are like this: v/vt/vn v/vt/vn v/vt/vn
-
-        pass
+                        vt.append(0)
+                    if smooth_shading:
+                        vn.append(p[2])
+                if smooth_shading:
+                    face = Triangle(v[0], v[1], v[2], colour, vt[0], vt[1], vt[2], vn[0], vn[1], vn[2])
+                else:
+                    face = face = Triangle(v[0], v[1], v[2], colour, vt[0], vt[1], vt[2])
+                if in_group:
+                    objects[object_num]['groups'][group_num]['vertices'].append(face)
+                else:
+                    objects[object_num]['vertices'].append(face)
+    return objects
 
 #——————————[ PRIMITIVES ]———————————————————————————————————————————————————————————————————————————————————————————————
 
@@ -223,10 +225,9 @@ class Model:
     set_colours : Assign colours to a range of triangles
     """
 
-    def __init__(self, model_path: str) -> None:
-        self.vertices  = np.array(())
-        self.triangles = np.array(())
-        self.model_path = model_path
+    def __init__(self, verticies=np.array(()), triangles= np.array(())) -> None:
+        self.vertices  = verticies
+        self.triangles = triangles
 
     def set_colours(self, colours: list, start: int = 0) -> None:
         """
@@ -309,6 +310,12 @@ class Cube(Model):
         ))
 
 #——————————[ INSTANCE ]—————————————————————————————————————————————————————————————————————————————————————————————————
+
+def make_instance(model: Model|list[Model], transform: Transform,  mat: Material|list[Material]) -> Instance:
+    if model is list:
+        return ComplexInstance(model, transform, mat)
+    else:
+        return Instance(model, transform, mat)
 
 class Instance:
     """
@@ -412,6 +419,43 @@ class Instance:
         P1 = t.P1 + self.transform.pos
         P2 = t.P2 + self.transform.pos
         return Triangle(P0, P1, P2, t.colour, P0_uv=t.P0_uv, P1_uv=t.P1_uv, P2_uv=t.P2_uv)
+
+
+class ComplexInstance(Instance):
+    """
+        A positioned, scaled, and rotated occurrence of multiple Model in the scene, with the same transform.
+
+        Multiple instances can share the same Model, each with its own Transform and Material.
+        The transform is applied in order: scale → rotate (Rz @ Ry @ Rx) → translate.
+
+        [ FIELDS ]
+
+        models     : list[Model]     | Shared mesh geometry
+        transform  : Transform       | Position, scale, and rotation in world space
+        mats       : list[Material]  | Material used to shade this instance
+        instances  : list[Instances] | Each model has a unique instance
+
+        [ METHODS ]
+
+        apply_transform : Return all triangles of the models transformed to world space
+        scale           : Apply per-axis scaling to a triangle
+        rotate          : Apply Euler rotation (XYZ order) to a triangle
+        translate       : Apply world-space translation to a triangle
+        """
+
+    def __init__(self, models: list[Model], transform: Transform, mats: list[Material]):
+        self.models = models
+        self.transform = transform
+        self.mats = mats
+        self.instances = [Instance(models[i], transform, mats[min(i, len(mats) - 1)]) for i in range(len(models))]
+
+
+    def apply_transform(self) -> list:
+        transformed = []
+        for instance in self.instances:
+            transformed += instance.apply_transform()
+        return transformed
+
 
 #——————————[ LIGHTS ]———————————————————————————————————————————————————————————————————————————————————————————————————
 
