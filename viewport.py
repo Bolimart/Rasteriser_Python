@@ -101,7 +101,7 @@ class Camera:
         """
         # Back-face culling — skip triangles whose normal points away from the camera
         to_camera = self.pos - triangle.P0
-        if not ignore_back_face and np.dot(triangle.P2_n, to_camera) <= 0:
+        if not ignore_back_face and np.dot(triangle.get_normal(), to_camera) <= 0:
             if debug:
                 print(f"Rejected — back face (dot={np.dot(triangle.P2_n, to_camera):.3f})")
             return False

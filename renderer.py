@@ -1,4 +1,4 @@
-from math import floor
+from math import floor, ceil
 
 import numpy as np
 from objects import *
@@ -82,120 +82,130 @@ def interp_float(i0: float, d0: float, i1: float, d1: float) -> list:
 #——————————[ RASTERISATION ]—————————————————————————————————————————————————————————————————————————————————————————————
 
 def draw_triangle(triangle: Triangle, data_buffer: np.ndarray, view_dist: float, mat_id: int) -> None:
-    """
-    Rasterise a projected triangle into the G-buffer using a scanline algorithm.
+    
+    def make_edge_lists(y0, y1, y2, v0, v1, v2):
+        """Interpolate a single attribute along all three edges, return (left, right)."""
+        e01 = interp_float(y0, v0, y1, v1)
+        e12 = interp_float(y1, v1, y2, v2)
+        e02 = interp_float(y0, v0, y2, v2)
+        if len(e01) > 0:
+            e01.pop()
+        e012 = e01 + e12
+        return e02, e012 # long edge, short edges — caller decides left/right
 
-    Writes depth, normal, UV coordinates, and material ID per pixel.
-    Uses a depth test to keep only the closest surface at each pixel.
-
-    UV coordinates are interpolated perspective-correctly by interpolating u/z and v/z
-    along edges (which are linear in screen space), then dividing by 1/z at each pixel
-    to recover the true u and v values.
-
-    G-buffer channels written:
-        [0:3] — world-space normal, encoded as (n + 1) * 0.5
-        [3]   — depth as 1/z, normalised by view_dist to [0, 1]
-        [4:6] — perspective-correct UV coordinates (u, v)
-        [6]   — material ID
-
-    :param triangle:   Projected Triangle with screen-space P0/P1/P2 and 1/z depth
-    :param data_buffer: G-buffer array of shape (height, width, 7)
-    :param view_dist:  Maximum view distance used to normalise depth to [0, 1]
-    :param mat_id:     Material ID to write into the G-buffer for this triangle
-    """
     x0, y0, depth0 = triangle.P0
     x1, y1, depth1 = triangle.P1
     x2, y2, depth2 = triangle.P2
     u0, v0 = triangle.P0_uv
     u1, v1 = triangle.P1_uv
     u2, v2 = triangle.P2_uv
-
-    # Premultiply UVs by depth (1/z) so they interpolate linearly in screen space.
-    # Dividing by the interpolated 1/z at each pixel recovers the perspective-correct value.
+    n0 = triangle.P0_n
+    n1 = triangle.P1_n
+    n2 = triangle.P2_n
     u0, v0 = u0 * depth0, v0 * depth0
     u1, v1 = u1 * depth1, v1 * depth1
     u2, v2 = u2 * depth2, v2 * depth2
+    
+    smooth = True
+    if (n0[0] == n1[0] and n0[0] == n2[0]) and (n0[1] == n1[1] and n0[1] == n2[1]) and (n0[2] == n1[2] and n0[2] == n2[2]):
+        smooth = False
 
-    # Step 1 — Sort vertices so that y0 <= y1 <= y2 (top to bottom).
-    # All associated per-vertex data (depth, u, v) is swapped alongside x and y.
-    if y1 < y0: x0,x1=swap(x0,x1); y0,y1=swap(y0,y1); depth0,depth1=swap(depth0,depth1); u0,u1=swap(u0,u1); v0,v1=swap(v0,v1)
-    if y2 < y0: x0,x2=swap(x0,x2); y0,y2=swap(y0,y2); depth0,depth2=swap(depth0,depth2); u0,u2=swap(u0,u2); v0,v2=swap(v0,v2)
-    if y2 < y1: x1,x2=swap(x1,x2); y1,y2=swap(y1,y2); depth1,depth2=swap(depth1,depth2); u1,u2=swap(u1,u2); v1,v2=swap(v1,v2)
+    # Sort ALL attributes together by y, once
+    if y1 < y0: x0,x1=swap(x0,x1); y0,y1=swap(y0,y1); depth0,depth1=swap(depth0,depth1); u0,u1=swap(u0,u1); v0,v1=swap(v0,v1); n0,n1=swap(n0,n1)
+    if y2 < y0: x0,x2=swap(x0,x2); y0,y2=swap(y0,y2); depth0,depth2=swap(depth0,depth2); u0,u2=swap(u0,u2); v0,v2=swap(v0,v2); n0,n2=swap(n0,n2)
+    if y2 < y1: x1,x2=swap(x1,x2); y1,y2=swap(y1,y2); depth1,depth2=swap(depth1,depth2); u1,u2=swap(u1,u2); v1,v2=swap(v1,v2); n1,n2=swap(n1,n2)
+    
+    # Interpolate each attribute along edges using the same sorted y values
+    x02,  x012  = make_edge_lists(y0, y1, y2, x0,     x1,     x2,)
+    d02,  d012  = make_edge_lists(y0, y1, y2, depth0, depth1, depth2)
+    u02,  u012  = make_edge_lists(y0, y1, y2, u0,     u1,     u2,)
+    v02,  v012  = make_edge_lists(y0, y1, y2, v0,     v1,     v2,)
+    if smooth:
+        n002,  n0012  = make_edge_lists(y0, y1, y2, n0[0], n1[0], n2[0])
+        n102,  n1012  = make_edge_lists(y0, y1, y2, n0[1], n1[1], n2[1])
+        n202,  n2012  = make_edge_lists(y0, y1, y2, n0[2], n1[2], n2[2])
+    
 
-    # Step 2 — Interpolate X, depth, u, and v along all three edges.
-    # x01/x12/x02 are integer X values per scanline; depth/u/v are floats.
-    # The long edge P0→P2 is always computed. The two short edges P0→P1 and P1→P2
-    # are computed separately and concatenated to cover the same scanline range.
-    x01 = interp(y0, x0, y1, x1);       x12 = interp(y1, x1, y2, x2);       x02 = interp(y0, x0, y2, x2)
-    u01 = interp_float(y0, u0, y1, u1); u12 = interp_float(y1, u1, y2, u2); u02 = interp_float(y0, u0, y2, u2)
-    v01 = interp_float(y0, v0, y1, v1); v12 = interp_float(y1, v1, y2, v2); v02 = interp_float(y0, v0, y2, v2)
-    d01 = interp_float(y0, depth0, y1, depth1); d12 = interp_float(y1, depth1, y2, depth2); d02 = interp_float(y0, depth0, y2, depth2)
-
-    # Step 3 — Concatenate the two short-edge lists into one list spanning P0→P1→P2.
-    # The shared middle vertex (P1) appears at the end of x01 and the start of x12,
-    # so pop the duplicate before concatenating.
-    x01.pop(); x012 = x01 + x12; del x01, x12
-    d01.pop(); d012 = d01 + d12; del d01, d12
-    u01.pop(); u012 = u01 + u12; del u01, u12
-    v01.pop(); v012 = v01 + v12; del v01, v12
-
-    # Step 4 — Determine which edge list is the left boundary and which is the right.
-    # Sample the middle scanline of both lists: whichever has the smaller X is on the left.
-    m = floor(len(x012) / 2)
+    # Determine left/right using x, then apply same assignment to all attributes
+    m = min(floor(len(x012) / 2), len(x02) - 1, len(x012) - 1)
     if x02[m] < x012[m]:
-        x_left, x_right = x02, x012
-        d_left, d_right = d02, d012
-        u_left, u_right = u02, u012
-        v_left, v_right = v02, v012
+        x_left,  x_right  = x02,  x012
+        d_left,  d_right  = d02,  d012
+        u_left,  u_right  = u02,  u012
+        v_left,  v_right  = v02,  v012
+        if smooth:
+            n0_left, n0_right = n002, n0012
+            n1_left, n1_right = n102, n1012
+            n2_left, n2_right = n202, n2012
     else:
-        x_left, x_right = x012, x02
-        d_left, d_right = d012, d02
-        u_left, u_right = u012, u02
-        v_left, v_right = v012, v02
-    del x02, x012, d02, d012, u02, u012, v02, v012
+        x_left,  x_right  = x012, x02
+        d_left,  d_right  = d012, d02
+        u_left,  u_right  = u012, u02
+        v_left,  v_right  = v012, v02
+        if smooth:
+            n0_left, n0_right = n0012, n002
+            n1_left, n1_right = n1012, n102 
+            n2_left, n2_right = n2012, n202
 
-    # Step 5 — Fill horizontal scanlines between the left and right edges.
-    height, width = data_buffer.shape[:2]
-    y0, y2 = int(y0), int(y2)
+    y0, y2 = floor(y0), ceil(y2)
+    if y0 == y2:
+        y2 = y0 + 1
 
-    # Encode the normal once per triangle — the same value is written for every pixel
-    normal_encoded = [
-        (triangle.P2_n[0] + 1) * 0.5,
-        (triangle.P2_n[1] + 1) * 0.5,
-        (triangle.P2_n[2] + 1) * 0.5,
-    ]
-
-    for y in range(y0, y2):
+    i = 0
+    for y in range(y0, y2): 
         i = y - y0
-        xl, xr = int(x_left[i]), int(x_right[i])
-        dl, dr = d_left[i], d_right[i]
-        ul, ur = u_left[i], u_right[i]
-        vl, vr = v_left[i], v_right[i]
+        if i >= len(x_left) or i >= len(x_right):
+            continue
+        xl,  xr  = int(x_left[i]), int(x_right[i])
+        dl,  dr  = d_left[i],  d_right[i]
+        ul,  ur  = u_left[i],  u_right[i]
+        vl,  vr  = v_left[i],  v_right[i]
+        if smooth:
+            n0l, n0r = n0_left[i], n0_right[i]
+            n1l, n1r = n1_left[i], n1_right[i]
+            n2l, n2r = n2_left[i], n2_right[i]
+
+        xl = floor(x_left[i])
+        xr = ceil(x_right[i])
+
+        if xl == xr:
+            xr = xl + 1
 
         for x in range(xl, xr):
+            i+=1
+            #if x < 0 or x >= width or y < 0 or y >= height:
+            #    continue
 
-            if x < 0 or x >= width or y < 0 or y >= height:
-                continue
-
-            # Interpolate 1/z and premultiplied u/z, v/z across the scanline.
             t = (x - xl) / (xr - xl) if xr != xl else 0
             d         = float(lerp(dl, dr, t))
             inv_depth = min(max(d / view_dist, 0), 1) if d != 0 else 0
 
-            # Depth test — skip pixel if something closer is already written
             if data_buffer[y, x, 3] >= inv_depth:
                 continue
 
-            # Recover perspective-correct u and v by dividing out the premultiplied 1/z
-            u = lerp(ul, ur, t) / d if d != 0 else 0
-            v = lerp(vl, vr, t) / d if d != 0 else 0
+            u  = lerp(ul, ur, t) / d if d != 0 else 0
+            v  = lerp(vl, vr, t) / d if d != 0 else 0
+            if smooth:
+                n0 = lerp(n0l, n0r, t)  # Perspective-correct interpolation
+                n1 = lerp(n1l, n1r, t)
+                n2 = lerp(n2l, n2r, t)
 
-            data_buffer[y, x, 0:3] = normal_encoded  # encoded world-space normal
-            data_buffer[y, x, 3]   = inv_depth        # normalised depth (1/z)
-            data_buffer[y, x, 4:6] = [u, v]           # perspective-correct UV
-            data_buffer[y, x, 6]   = mat_id           # material ID
+                n = np.array([
+                    lerp(n0l, n0r, t),
+                    lerp(n1l, n1r, t),
+                    lerp(n2l, n2r, t),
+                ])
+                n = n / np.linalg.norm(n)  # ← renormalise
 
-        # TODO : Add smooth normal interpolation
+                normal_encoded = (n + 1) * 0.5
+            else:
+                normal_encoded = (triangle.P0_n + 1)*0.5
+
+            data_buffer[y, x, 0:3] = normal_encoded
+            data_buffer[y, x, 3]   = inv_depth
+            data_buffer[y, x, 4:6] = [u, v]
+            data_buffer[y, x, 6]   = mat_id
+    #print(f"y0={y0}, y2={y2}, x_left={x_left}, x_right={x_right}")
 
 
 def draw_wireframe_triangle(triangle: Triangle, image: np.ndarray) -> None:
@@ -323,7 +333,7 @@ def perspective_projection(triangle: Triangle, camera: 'Camera', width: int, hei
 
 #——————————[ RENDER ]————————————————————————————————————————————————————————————————————————————————————————————————————
 
-def render_wireframe_instance(instance: Instance, viewport: 'Viewport', image: np.ndarray, width: int, height: int) -> None:
+def render_wireframe_instance(instance: Instance, viewport: 'Viewport', image: np.ndarray, width: int, height: int, DEBUG=False) -> None:
     """
     Render a single instance as a wireframe by drawing the edges of each visible triangle.
 
@@ -333,13 +343,18 @@ def render_wireframe_instance(instance: Instance, viewport: 'Viewport', image: n
     :param width:    Output image width in pixels
     :param height:   Output image height in pixels
     """
+    if DEBUG:
+        t_len = len(instance.model.triangles)
+        i = 1
     for t in instance.apply_transform():
         projected = viewport.project_func(t, viewport.camera, width, height)
-        if projected is not None:
-            draw_wireframe_triangle(projected, image)
+        draw_wireframe_triangle(projected, image)
+        if DEBUG:
+            print(f"{i/t_len*100}")
+            i += 1
 
 
-def render_instance(instance: Instance, viewport: 'Viewport', data_buffer: np.ndarray, width: int, height: int, view_dist: float) -> None:
+def render_instance(instance: Instance, viewport: 'Viewport', data_buffer: np.ndarray, width: int, height: int, view_dist: float, DEBUG=False) -> None:
     """
     Rasterise a single instance into the G-buffer.
 
@@ -358,14 +373,19 @@ def render_instance(instance: Instance, viewport: 'Viewport', data_buffer: np.nd
     :param view_dist:  Maximum view distance used to normalise depth values
     """
     draw_back_faces = (instance.mat.id >> 3) & 0x1  # read double-sided flag from material ID
+    if DEBUG:
+        t_len = len(instance.model.triangles)
+        i = 1
     for t in instance.apply_transform():
         if viewport.camera.in_view(t, draw_back_faces):
-            T = viewport.project_func(t, viewport.camera, width, height)
-            if T is not None:
-                draw_triangle(T, data_buffer, view_dist, instance.mat.id)
+            projected = viewport.project_func(t, viewport.camera, width, height)
+            draw_triangle(projected, data_buffer, view_dist, instance.mat.id)
+        if DEBUG:
+            print(f"{i/t_len*100}")
+            i += 1
 
 
-def render(viewport: 'Viewport', width: int, height: int, view_dist: float, post_process: list = []) -> tuple:
+def render(viewport: 'Viewport', width: int, height: int, view_dist: float, post_process: list = [], DEBUG:bool=False) -> tuple:
     """
     Render the full scene to an RGB image.
 
@@ -392,15 +412,20 @@ def render(viewport: 'Viewport', width: int, height: int, view_dist: float, post
     image        = np.zeros((height, width, 3))
     data_buffer  = np.zeros((height, width, 7))
 
+    i = 0
     # Pass 1 — Geometry: rasterise all instances into the G-buffer
     for instance in viewport.objects:
         if type(instance) is ComplexInstance:
             for inst in instance.instances:
+                print(f"Rendreing instance {i} with {len(inst.model.triangles)} triangles")
                 materials.register(inst.mat)
-                render_instance(inst, viewport, data_buffer, width, height, view_dist)
+                render_instance(inst, viewport, data_buffer, width, height, view_dist, DEBUG)
+                i += 1
         else:
+            print(f"Rendreing instance {i} with {len(instance.model.triangles)} triangles")
             materials.register(instance.mat)
-            render_instance(instance, viewport, data_buffer, width, height, view_dist)
+            render_instance(instance, viewport, data_buffer, width, height, view_dist, DEBUG)
+            i += 1
 
     # Pass 2 — Shading: resolve each pixel's material and shade it
     for x in range(len(data_buffer)):
@@ -423,7 +448,7 @@ def render(viewport: 'Viewport', width: int, height: int, view_dist: float, post
 # TODO: Camera rotation
 
 
-def render_wireframe(viewport: 'Viewport', width: int, height: int) -> np.ndarray:
+def render_wireframe(viewport: 'Viewport', width: int, height: int, DEBUG:bool=False) -> np.ndarray:
     """
     Render the full scene as a wireframe.
 
@@ -433,6 +458,15 @@ def render_wireframe(viewport: 'Viewport', width: int, height: int) -> np.ndarra
     :return:         Image array of shape (height, width, 3)
     """
     image = np.zeros((height, width, 3))
+    i = 0
     for instance in viewport.objects:
-        render_wireframe_instance(instance, viewport, image, width, height)
+        if type(instance) is ComplexInstance:
+            for inst in instance.instances:
+                print(f"Rendreing instance {i} with {len(inst.model.triangles)} triangles")
+                render_wireframe_instance(inst, viewport, image, width, height)
+                i += 1
+        else:
+            print(f"Rendreing instance {i} with {len(instance.model.triangles)} triangles")
+            render_wireframe_instance(instance, viewport, image, width, height)
+            i += 1
     return image

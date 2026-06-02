@@ -4,7 +4,9 @@ from time import time
 
 #——————————[ ASSETS ]————————————————————————————————————————————————————————————————————————————————————————————————————
 
-crate_atlas = Atlas(pyplot.imread("grid.png"))
+grid_atlas = Atlas(pyplot.imread("grid.png"))
+crate_atlas = Atlas(pyplot.imread("crate.png"))
+teapot_smooth_shading = load_obj('models/utah_teapot_reso3.obj', smooth_shading=True)
 teapot = load_obj('models/utah_teapot_reso3.obj', smooth_shading=False)
 
 #——————————[ SCENE SETUP ]———————————————————————————————————————————————————————————————————————————————————————————————
@@ -29,14 +31,13 @@ cube.set_colours([
 ])
 
 # Materials
-red_crate_shader   = UnlitTexture(crate_atlas, [1, 0, 0])
-green_crate_shader = UnlitTexture(crate_atlas, [0, 1, 0])
-blue_crate_shader  = UnlitTexture(crate_atlas, [0, 0, 1])
-crate_shader       = UnlitTexture(crate_atlas)
+grid_shader   = UnlitTexture(grid_atlas, [0.3, 1, 0.1])
+crate_shader  = UnlitTexture(crate_atlas)
 
 # Scene objects
 objects = [
-    make_instance(teapot, Transform(Point3D(0, -1, 6), Point3D(1, 1, 1), Point3D(-110, 23, 0)), crate_shader)
+    make_instance(teapot_smooth_shading, Transform(Point3D(-1, 0, 6), Point3D(0.7, 0.7, 0.7), Point3D(-65, 180, 0)), grid_shader),
+    make_instance(teapot, Transform(Point3D(1, -2, 6), Point3D(0.7, 0.7, 0.7), Point3D(-110, 0, 0)), crate_shader)
 ]
 
 post_process = [
@@ -49,9 +50,12 @@ viewport = Viewport(objects, camera, perspective_projection)
 
 t = time()
 
-pyplot.imsave("img/image_wireframe.png", render_wireframe(viewport, 1000, 1000))
+print("Rendering wireframe:")
+pyplot.imsave("img/image_wireframe.png", render_wireframe(viewport, 2000, 2000))
+print(f"Done — saved wireframe.png in {time() - t:.3f} seconds")
 
-r, d_b = render(viewport, 1000, 1000, 500, post_process)
+print("Rendering image:")
+r, d_b = render(viewport, 500, 500, 500, post_process)
 
 # Build a UV visualisation image from G-buffer channels 4 and 5
 uv = np.zeros((len(d_b), len(d_b[0]), 3))

@@ -1,5 +1,3 @@
-from tokenize import group
-
 import numpy as np
 from materials import *
 
@@ -57,7 +55,7 @@ def load_obj(obj_path, colour=[1, 1, 1], smooth_shading: bool=True) -> list:
         new_object = lambda: {'vertices': [], 'groups': [], 'faces': []}
         new_group = lambda: {'vertices': [], 'faces': []}
 
-        objects = [new_group()]
+        objects = [new_object()]
         object_num = 0
         group_num = 0
         in_group = False
@@ -110,6 +108,13 @@ def load_obj(obj_path, colour=[1, 1, 1], smooth_shading: bool=True) -> list:
                     objects[object_num]['groups'][group_num]['faces'].append(face)
                 else:
                     objects[object_num]['faces'].append(face)
+    
+    faces_num = 0
+    for o in objects:
+        faces_num += len(o['faces'])
+        for g in o['groups']:
+            faces_num += len(g['faces'])
+    print(f"New object with {len(vertices)} verticies and {faces_num} faces imported.")
     return objects
 
 #——————————[ PRIMITIVES ]———————————————————————————————————————————————————————————————————————————————————————————————
@@ -308,7 +313,7 @@ class Cube(Model):
 
 #——————————[ INSTANCE ]—————————————————————————————————————————————————————————————————————————————————————————————————
 
-def make_instance(model: list[Model], transform: Transform,  mat: Material|list[Material]) -> Instance:
+def make_instance(model: list[Model], transform: Transform,  mat: Material|list[Material]):
     if model is Model:
         return Instance(model, transform, mat)
     elif len(model) == 1:
@@ -365,10 +370,28 @@ class Instance:
         :param t: Input triangle in local space
         :return:  Triangle with scaled vertices
         """
+            # Scale vertices
         P0 = t.P0 * self.transform.scale
         P1 = t.P1 * self.transform.scale
         P2 = t.P2 * self.transform.scale
-        return Triangle(P0, P1, P2, t.colour, P0_uv=t.P0_uv, P1_uv=t.P1_uv, P2_uv=t.P2_uv)
+
+        # Scale normals by the inverse of the scale factors
+        inv_scale = 1.0 / self.transform.scale
+        P0_n = t.P0_n * inv_scale
+        P1_n = t.P1_n * inv_scale
+        P2_n = t.P2_n * inv_scale
+
+        # Renormalize the normals to ensure they are unit vectors
+        P0_n = normalize(P0_n)
+        P1_n = normalize(P1_n)
+        P2_n = normalize(P2_n)
+
+        return Triangle(
+            P0, P1, P2,
+            t.colour,
+            t.P0_uv, t.P1_uv, t.P2_uv,
+            P0_n, P1_n, P2_n
+        )
 
     def rotate(self, t: Triangle) -> Triangle:
         """
@@ -399,13 +422,30 @@ class Instance:
                 [0,           0,          1],
             ])
 
-            R = Rz @ Ry @ Rx        # combined rotation: X applied first, then Y, then Z
+            R = Rz @ Ry @ Rx  # Combined rotation: X applied first, then Y, then Z
             return R @ np.array(v)
 
+        # Rotate vertices
         P0 = rotate_vertex(t.P0)
         P1 = rotate_vertex(t.P1)
         P2 = rotate_vertex(t.P2)
-        return Triangle(P0, P1, P2, t.colour, P0_uv=t.P0_uv, P1_uv=t.P1_uv, P2_uv=t.P2_uv)
+
+        # Rotate normals using the same rotation matrix
+        P0_n = rotate_vertex(t.P0_n)
+        P1_n = rotate_vertex(t.P1_n)
+        P2_n = rotate_vertex(t.P2_n)
+
+        # Renormalize the normals to ensure they are unit vectors
+        P0_n = normalize(P0_n)
+        P1_n = normalize(P1_n)
+        P2_n = normalize(P2_n)
+
+        return Triangle(
+            P0, P1, P2,
+            t.colour,
+            t.P0_uv, t.P1_uv, t.P2_uv,
+            P0_n, P1_n, P2_n
+        )
 
     def translate(self, t: Triangle) -> Triangle:
         """
@@ -417,7 +457,7 @@ class Instance:
         P0 = t.P0 + self.transform.pos
         P1 = t.P1 + self.transform.pos
         P2 = t.P2 + self.transform.pos
-        return Triangle(P0, P1, P2, t.colour, P0_uv=t.P0_uv, P1_uv=t.P1_uv, P2_uv=t.P2_uv)
+        return Triangle(P0, P1, P2, t.colour, t.P0_uv, t.P1_uv, t.P2_uv, t.P0_n, t.P1_n, t.P2_n)
 
 
 class ComplexInstance(Instance):
