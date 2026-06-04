@@ -354,7 +354,7 @@ def render_wireframe_instance(instance: Instance, viewport: 'Viewport', image: n
             i += 1
 
 
-def render_instance(instance: Instance, viewport: 'Viewport', data_buffer: np.ndarray, width: int, height: int, view_dist: float, DEBUG=False) -> None:
+def render_instance(instance: Instance, viewport: 'Viewport', data_buffer: np.ndarray, width: int, height: int, DEBUG=False) -> None:
     """
     Rasterise a single instance into the G-buffer.
 
@@ -370,7 +370,6 @@ def render_instance(instance: Instance, viewport: 'Viewport', data_buffer: np.nd
     :param data_buffer: G-buffer array of shape (height, width, 7) — modified in place
     :param width:      Output image width in pixels
     :param height:     Output image height in pixels
-    :param view_dist:  Maximum view distance used to normalise depth values
     """
     draw_back_faces = (instance.mat.id >> 3) & 0x1  # read double-sided flag from material ID
     if DEBUG:
@@ -379,13 +378,13 @@ def render_instance(instance: Instance, viewport: 'Viewport', data_buffer: np.nd
     for t in instance.apply_transform():
         if viewport.camera.in_view(t, draw_back_faces):
             projected = viewport.project_func(t, viewport.camera, width, height)
-            draw_triangle(projected, data_buffer, view_dist, instance.mat.id)
+            draw_triangle(projected, data_buffer, viewport.camera.view_dist, instance.mat.id)
         if DEBUG:
             print(f"{i/t_len*100}")
             i += 1
 
 
-def render(viewport: 'Viewport', width: int, height: int, view_dist: float, post_process: list = [], DEBUG:bool=False) -> tuple:
+def render(viewport: 'Viewport', width: int, height: int, post_process: list = [], DEBUG:bool=False) -> tuple:
     """
     Render the full scene to an RGB image.
 
@@ -404,7 +403,6 @@ def render(viewport: 'Viewport', width: int, height: int, view_dist: float, post
     :param viewport:     Viewport containing the scene objects, camera, and projection function
     :param width:        Output image width in pixels
     :param height:       Output image height in pixels
-    :param view_dist:    Maximum view distance for depth normalisation
     :param post_process: Ordered list of PostProcess materials to apply after shading
     :return:             Tuple of (image, data_buffer) — both np.ndarray
     """
@@ -413,20 +411,22 @@ def render(viewport: 'Viewport', width: int, height: int, view_dist: float, post
     data_buffer  = np.zeros((height, width, 7))
 
     i = 0
+    print("Pass 1 : Geometry")
     # Pass 1 — Geometry: rasterise all instances into the G-buffer
     for instance in viewport.objects:
         if type(instance) is ComplexInstance:
             for inst in instance.instances:
                 print(f"Rendreing instance {i} with {len(inst.model.triangles)} triangles")
                 materials.register(inst.mat)
-                render_instance(inst, viewport, data_buffer, width, height, view_dist, DEBUG)
+                render_instance(inst, viewport, data_buffer, width, height, DEBUG)
                 i += 1
         else:
             print(f"Rendreing instance {i} with {len(instance.model.triangles)} triangles")
             materials.register(instance.mat)
-            render_instance(instance, viewport, data_buffer, width, height, view_dist, DEBUG)
+            render_instance(instance, viewport, data_buffer, width, height, DEBUG)
             i += 1
-
+            
+    print("Pass 2 : Shading & Material")
     # Pass 2 — Shading: resolve each pixel's material and shade it
     for x in range(len(data_buffer)):
         for y in range(len(data_buffer[0])):
@@ -437,11 +437,15 @@ def render(viewport: 'Viewport', width: int, height: int, view_dist: float, post
                     material    = materials.get(material_id)
                     draw_pixel(material, image, data_buffer, x, y, viewport.camera)
 
+    print("Pass 3 : Post-process")
     # Pass 3 — Post-process: apply screen-space effects in order
     for x in range(len(data_buffer)):
         for y in range(len(data_buffer[0])):
             for pp in post_process:
                 draw_pixel(pp, image, data_buffer, x, y, viewport.camera)
+                
+    # Gamma correction
+    image = image ** (1/viewport.camera.gamma)
 
     return image, data_buffer
 
@@ -469,4 +473,5 @@ def render_wireframe(viewport: 'Viewport', width: int, height: int, DEBUG:bool=F
             print(f"Rendreing instance {i} with {len(instance.model.triangles)} triangles")
             render_wireframe_instance(instance, viewport, image, width, height)
             i += 1
+
     return image

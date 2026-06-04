@@ -321,6 +321,7 @@ def make_instance(model: list[Model], transform: Transform,  mat: Material|list[
     else:
         return ComplexInstance(model, transform, mat)
 
+# TODO: add bounding box for frustrum culling
 class Instance:
     """
     A positioned, scaled, and rotated occurrence of a Model in the scene.
@@ -499,7 +500,7 @@ class ComplexInstance(Instance):
 
 #——————————[ LIGHTS ]———————————————————————————————————————————————————————————————————————————————————————————————————
 
-class Light:
+class PointLight:
     """
     A point light source with a position, colour, and intensity.
 
@@ -510,9 +511,31 @@ class Light:
     intensity : float | Brightness multiplier
     """
 
-    def __init__(self, colour: list, pos: np.ndarray, intensity: float) -> None:
-        self.colour     = colour
-        self.pos       = pos
+    def __init__(self, pos, ambient, diffuse, specular=[1, 1, 1], intensity:float=1):
+        self.specular = np.array(specular)
+        self.diffuse = np.array(diffuse)
+        self.ambient = np.array(ambient)
+        self.pos = pos
+        self.intensity = intensity
+
+class DirectionalLight:
+    
+    def __init__(self, dir, ambient, diffuse, specular=[1, 1, 1], intensity:float=1):
+        self.specular = np.array(specular)
+        self.diffuse = np.array(diffuse)
+        self.ambient = np.array(ambient)
+        self.dir = dir
+        self.intensity = intensity
+        
+class ConeLight:
+    
+    def __init__(self, pos, dir, radius, ambient, diffuse, specular=[1, 1, 1], intensity:float=1):
+        self.specular = np.array(specular)
+        self.diffuse = np.array(diffuse)
+        self.ambient = np.array(ambient)
+        self.pos = pos
+        self.dir = dir
+        self.radius = radius
         self.intensity = intensity
 
 # TODO: Cone light (spot light)
@@ -557,4 +580,4 @@ class Atlas:
         ty = int((1 - v) * (h - 1))  # flip V: row 0 is top, but UV (0,0) is bottom-left
         if type(self.texture[ty, tx, 0]) is np.uint8:
             return np.clip(self.texture[ty, tx] / 255.0, 0, 1)
-        return self.texture[ty, tx]
+        return self.texture[ty, tx]                                       

@@ -66,12 +66,16 @@ class Camera:
                  height: float,
                  d: float,
                  pos: tuple,
-                 normal: tuple) -> None:
+                 normal: tuple,
+                 view_dist = 1000,
+                 gamma = 2.2) -> None:
         self.normal = np.array(normal, dtype=float)
         self.pos    = np.array(pos,    dtype=float)
         self.d      = d
         self.width  = width
         self.height = height
+        self.view_dist = view_dist
+        self.gamma = gamma
 
         # Construct an orthonormal basis for the image plane.
         # Pick an arbitrary vector not parallel to the normal, then use cross products.

@@ -6,8 +6,7 @@ from time import time
 
 grid_atlas = Atlas(pyplot.imread("grid.png"))
 crate_atlas = Atlas(pyplot.imread("crate.png"))
-teapot_smooth_shading = load_obj('models/utah_teapot_reso3.obj', smooth_shading=True)
-teapot = load_obj('models/utah_teapot_reso3.obj', smooth_shading=False)
+teapot = load_obj('models/utah_teapot.obj', smooth_shading=True)
 
 #——————————[ SCENE SETUP ]———————————————————————————————————————————————————————————————————————————————————————————————
 
@@ -17,6 +16,8 @@ camera = Camera(
     pos    = (0.0, 0.0, 0.0),
     normal = (0.0, 0.0, 1.0),  # looking along +Z
     d      = 300,
+    view_dist= 500,
+    gamma = 1.5
 )
 
 # Shared geometry — all instances reference the same Cube model
@@ -30,13 +31,18 @@ cube.set_colours([
     np.array((1, 0, 1)), np.array((1, 0, 1)),  # top
 ])
 
+lights = [
+    PointLight(np.array([5, 5, 0]), np.array([1, 1, 1]), np.array([1, 1, 1])),
+    PointLight(np.array([-5, 0, 0]), np.array([0.5, 0.1, 0.3]), np.array([0.5, 0.1, 0.3]), np.array([0.5, 0.1, 0.3]), intensity=0.4),
+]
+
 # Materials
-grid_shader   = UnlitTexture(grid_atlas, [0.3, 1, 0.1])
-crate_shader  = UnlitTexture(crate_atlas)
+grid_shader   = LitTexture(grid_atlas, lights, np.array([0.05, 0.05, 0.05]), np.array([0.7, 0.7, 0.7]), np.array([1, 1, 1]), 50, 1)
+crate_shader  = LitTexture(crate_atlas, lights)
 
 # Scene objects
 objects = [
-    make_instance(teapot_smooth_shading, Transform(Point3D(-1, 0, 6), Point3D(0.7, 0.7, 0.7), Point3D(-65, 180, 0)), grid_shader),
+    make_instance(teapot, Transform(Point3D(-1, 0, 6), Point3D(0.7, 0.7, 0.7), Point3D(-65, 180, 0)), grid_shader),
     make_instance(teapot, Transform(Point3D(1, -2, 6), Point3D(0.7, 0.7, 0.7), Point3D(-110, 0, 0)), crate_shader)
 ]
 
@@ -55,7 +61,7 @@ pyplot.imsave("img/image_wireframe.png", render_wireframe(viewport, 2000, 2000))
 print(f"Done — saved wireframe.png in {time() - t:.3f} seconds")
 
 print("Rendering image:")
-r, d_b = render(viewport, 500, 500, 500, post_process)
+r, d_b = render(viewport, 1000, 1000, post_process)
 
 # Build a UV visualisation image from G-buffer channels 4 and 5
 uv = np.zeros((len(d_b), len(d_b[0]), 3))
@@ -66,6 +72,6 @@ for y in range(len(d_b[0])):
 pyplot.imsave("img/image.png",  r)
 pyplot.imsave("img/normal.png", d_b[:, :, :3])
 pyplot.imsave("img/depth.png",  d_b[:, :, 3])
-pyplot.imsave("img/uv.png",     uv)
+pyplot.imsave("img/uv.png",     np.clip(uv, 0, 1))
 
 print(f"Done — saved image.png in {time() - t:.3f} seconds")

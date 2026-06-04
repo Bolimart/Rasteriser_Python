@@ -117,7 +117,8 @@ class Material:
         :param y: Pixel row
         :return: np.ndarray of shape (3,) — decoded world-space normal
         """
-        return data_buffer[x, y, :3]
+        encoded = data_buffer[x, y, :3]
+        return encoded * 2 - 1  # ← decode from [0,1] back to [-1,1]
 
     def get_uv(self, data_buffer: np.ndarray, x: int, y: int) -> np.ndarray:
         """
@@ -130,7 +131,7 @@ class Material:
         """
         return data_buffer[x, y, 4:6]
 
-    def get_world_coordinates(self, data_buffer: np.ndarray, x: int, y: int, camera: object) -> list:
+    def get_world_pos(self, data_buffer: np.ndarray, x: int, y: int, camera: object) -> list:
         """
         Reconstruct the 3D world-space position of pixel (x, y) from depth and screen coords.
 
@@ -146,7 +147,12 @@ class Material:
         :param camera: Camera object with fields d, width, height
         :return: [x_world, y_world, z_world] — 3D position in world/view space
         """
-        z = 1.0 / self.get_depth(data_buffer, x, y)
+        inv_depth_normalised = data_buffer[x, y, 3]
+        if inv_depth_normalised == 0:
+            return np.zeros(3)
+        # Recover true 1/z from normalised depth
+        inv_z = inv_depth_normalised * camera.view_dist  # undo the /view_dist
+        z = 1.0 / inv_z
         h, w = data_buffer.shape[:2]
         x_view =  (x - w / 2) * (camera.width  / w) * z / camera.d
         y_view = -(y - h / 2) * (camera.height / h) * z / camera.d
@@ -177,6 +183,8 @@ class Material:
 # TODO: Group Shader
 
 #——————————[ MATERIALS ]————————————————————————————————————————————————————————————————————————————————————————————————
+
+# UNLIT MATERIALS
 
 class UnlitMaterial(Material):
     """
@@ -220,6 +228,65 @@ class UnlitTexture(UnlitMaterial):
         u, v = self.get_uv(data_buffer, x, y)
         return np.multiply(self.atlas.sample(u, v)[:3], self.color)
 
+# LIT MATERIALS
+
+class LitMaterial(Material):
+    def __init__(self, lights, ambient, diffuse, specular=[1, 1, 1], shininess=100, reflection=0.5, cast_shadow=False, double_sided=False, blend_mode=BLEND_OPAQUE):
+        super().__init__(cast_shadow, double_sided, blend_mode)
+        self.lights = lights
+        self.shininess = shininess
+        self.specular = np.array(specular)
+        self.diffuse = np.array(diffuse)
+        self.ambient = np.array(ambient)
+        self.reflection = reflection
+        
+
+    def get_pixel(self, image, data_buffer, x, y, camera, clip=True) -> np.ndarray:
+        """Return the flat colour using the Blinn-Phong illumination model."""
+        normal = self.get_normal(data_buffer, x, y)
+        point = self.get_world_pos(data_buffer, x, y, camera)
+        normalize = lambda v: v / np.linalg.norm(v)
+
+        illumination = np.zeros((3))
+        for light in self.lights:
+            # Ambient
+            ambient = np.multiply(self.ambient, light.ambient)
+
+            # Diffuse
+            light_dir = normalize(light.pos - point)
+            diffuse = np.multiply(
+                np.multiply(self.diffuse, light.diffuse),
+                max(np.dot(normal, light_dir), 0)
+            )
+
+            # Specular (Blinn-Phong)
+            view_dir = normalize(camera.pos - point)
+            H = normalize(light_dir + view_dir)  # Halfway vector
+            specular = np.multiply(
+                np.multiply(self.specular, light.specular),
+                max(np.dot(normal, H), 0) ** self.shininess
+            )
+            
+            # Attenuation 
+            illumination += ambient + diffuse + specular
+
+        if clip:
+            return np.clip(illumination, 0, 1)
+        else:
+            return illumination
+        
+
+class LitTexture (LitMaterial):
+    
+    def __init__(self, atlas, lights, ambient=[0.1, 0.1, 0.1], diffuse=[1, 1, 1], specular=[1, 1, 1], shininess=100, reflection=0.5, cast_shadow=False, double_sided=False, blend_mode=BLEND_OPAQUE):
+        super().__init__(lights, ambient, diffuse, specular, shininess, reflection, cast_shadow, double_sided, blend_mode)
+        self.atlas = atlas
+        
+    def get_pixel(self, image, data_buffer, x, y, camera):
+        color = super().get_pixel(image, data_buffer, x, y, camera, False)
+        u, v = self.get_uv(data_buffer, x, y)
+        return np.clip(np.multiply(self.atlas.sample(u, v)[:3], color))
+        
 #——————————[ POST PROCESS MATERIALS ]———————————————————————————————————————————————————————————————————————————————————
 
 class PostProcess(Material):
