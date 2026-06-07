@@ -242,33 +242,14 @@ class LitMaterial(Material):
         
 
     def get_pixel(self, image, data_buffer, x, y, camera, clip=True) -> np.ndarray:
-        """Return the flat colour using the Blinn-Phong illumination model."""
         normal = self.get_normal(data_buffer, x, y)
         point = self.get_world_pos(data_buffer, x, y, camera)
-        normalize = lambda v: v / np.linalg.norm(v)
 
         illumination = np.zeros((3))
         for light in self.lights:
-            # Ambient
-            ambient = np.multiply(self.ambient, light.ambient)
-
-            # Diffuse
-            light_dir = normalize(light.pos - point)
-            diffuse = np.multiply(
-                np.multiply(self.diffuse, light.diffuse),
-                max(np.dot(normal, light_dir), 0)
-            )
-
-            # Specular (Blinn-Phong)
-            view_dir = normalize(camera.pos - point)
-            H = normalize(light_dir + view_dir)  # Halfway vector
-            specular = np.multiply(
-                np.multiply(self.specular, light.specular),
-                max(np.dot(normal, H), 0) ** self.shininess
-            )
             
             # Attenuation 
-            illumination += ambient + diffuse + specular
+            illumination += light.get_illumination(self, camera, normal, point)
 
         if clip:
             return np.clip(illumination, 0, 1)
@@ -285,7 +266,7 @@ class LitTexture (LitMaterial):
     def get_pixel(self, image, data_buffer, x, y, camera):
         color = super().get_pixel(image, data_buffer, x, y, camera, False)
         u, v = self.get_uv(data_buffer, x, y)
-        return np.clip(np.multiply(self.atlas.sample(u, v)[:3], color))
+        return np.clip(np.multiply(self.atlas.sample(u, v)[:3], color), 0, 1)
         
 #——————————[ POST PROCESS MATERIALS ]———————————————————————————————————————————————————————————————————————————————————
 

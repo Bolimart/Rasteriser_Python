@@ -6,7 +6,7 @@ from time import time
 
 grid_atlas = Atlas(pyplot.imread("grid.png"))
 crate_atlas = Atlas(pyplot.imread("crate.png"))
-teapot = load_obj('models/utah_teapot.obj', smooth_shading=True)
+teapot = load_obj('models/utah_teapot_reso3.obj', smooth_shading=True)
 
 #——————————[ SCENE SETUP ]———————————————————————————————————————————————————————————————————————————————————————————————
 
@@ -57,11 +57,11 @@ viewport = Viewport(objects, camera, perspective_projection)
 t = time()
 
 print("Rendering wireframe:")
-pyplot.imsave("img/image_wireframe.png", render_wireframe(viewport, 2000, 2000))
+pyplot.imsave("img/image_wireframe.png", render_wireframe(viewport, 4000, 4000))
 print(f"Done — saved wireframe.png in {time() - t:.3f} seconds")
 
 print("Rendering image:")
-r, d_b = render(viewport, 1000, 1000, post_process)
+r, d_b = render(viewport, 1000, 1000)
 
 # Build a UV visualisation image from G-buffer channels 4 and 5
 uv = np.zeros((len(d_b), len(d_b[0]), 3))
