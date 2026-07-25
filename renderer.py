@@ -1,5 +1,6 @@
+import time
 from math import floor, ceil
-
+from multiprocessing import Pool, get_context
 import numpy as np
 from objects import *
 from viewport import *
@@ -92,42 +93,51 @@ def draw_triangle(triangle: Triangle, data_buffer: np.ndarray, view_dist: float,
     y_max = min(ceil(max(y0, y1, y2)), height-1)
     y_min = max(floor(min(y0, y1, y2)), 0)
 
-    # Loop over the bounding box
-    for y in range(y_min, y_max + 1): # Can be parralellized (for each row for example)
-        for x in range(x_min, x_max + 1):
-            px = x + 0.5 ; py = y + 0.5
-            e0 = (x1 - px)*(y2 - py) - (x2 - px)*(y1 - py)
-            e1 = (x2 - px)*(y0 - py) - (x0 - px)*(y2 - py)
-            e2 = (x0 - px)*(y1 - py) - (x1 - px)*(y0 - py)
+    # Create a matrix of all the pixels in the bounding box
+    xs = np.arange(x_min, x_max + 1)
+    ys = np.arange(y_min, y_max + 1)
+    px, py = np.meshgrid(xs, ys)
 
-            # Check if the pixel is inside the triangle
-            if (e0 >= 0 and e1 >= 0 and e2 >= 0) or (e0 <= 0 and e1 <= 0 and e2 <= 0):
-                # Barycentric weights
-                w0 = e0/area
-                w1 = e1/area
-                w2 = 1-w0-w1
+    e0 = (x1 - px) * (y2 - py) - (x2 - px) * (y1 - py)
+    e1 = (x2 - px) * (y0 - py) - (x0 - px) * (y2 - py)
+    e2 = (x0 - px) * (y1 - py) - (x1 - px) * (y0 - py)
 
-                inv_z = w0*z0 + w1*z1 + w2*z2
+    # Check if each pixel is inside the triangle -> boolean mask of the pixels inside
+    inside = ((e0 >= 0) & (e1 >= 0) & (e2 >= 0)) | ((e0 <= 0) & (e1 <= 0) & (e2 <= 0))
 
-                if data_buffer[y, x, 3] >= inv_z:
-                    continue
+    # Barycentric weights
+    w0 = e0 / area
+    w1 = e1 / area
+    w2 = 1.0 - w0 - w1
 
-                u = (w0*u0 + w1*u1 + w2*u2) / inv_z
-                v = (w0*v0 + w1*v1 + w2*v2) / inv_z
-                if smooth:
-                    if smooth:
-                        n = w0 * n0 + w1 * n1 + w2 * n2
-                        n = n / np.linalg.norm(n)
-                        normal_encoded = (n + 1) * 0.5
-                    else:
-                        normal_encoded = (triangle.P0_n + 1) * 0.5
-                else:
-                    normal_encoded = (triangle.P0_n + 1) * 0.5
+    inv_z = w0 * z0 + w1 * z1 + w2 * z2 # depth mask
 
-                data_buffer[y, x, 0:3] = normal_encoded
-                data_buffer[y, x, 3] = inv_z
-                data_buffer[y, x, 4:6] = [u, v]
-                data_buffer[y, x, 6] = mat_id
+    region = data_buffer[y_min:y_max + 1, x_min:x_max + 1] # The region of the DB inside the bounding box
+    write = inside & (inv_z > region[: , :, 3]) # The pixels that are inside the triangle and above the last depth value
+
+    u = (w0 * u0 + w1 * u1 + w2 * u2) / inv_z
+    v = (w0 * v0 + w1 * v1 + w2 * v2) / inv_z
+
+    if smooth: # Smooth normals
+        # each component is a 2D array; stack into (H_box, W_box, 3)
+        n = np.stack([
+            w0 * n0[0] + w1 * n1[0] + w2 * n2[0],
+            w0 * n0[1] + w1 * n1[1] + w2 * n2[1],
+            w0 * n0[2] + w1 * n1[2] + w2 * n2[2],
+        ], axis=-1) # Stack the normal vectors along the third axis, axis=-1 means stack along the last axis
+        length = np.linalg.norm(n, axis=-1, keepdims=True) # Get the length of each normal vector, keepdims to keep the same shape as n
+        length[length == 0] = 1.0 # Avoid division by zero
+        normal_encoded = (n / length + 1) * 0.5
+
+    # Write the triangle's data into the G-buffer'
+    region[write, 3] = inv_z[write] # Write only where write is True
+    region[write, 4] = u[write]
+    region[write, 5] = v[write]
+    region[write, 6] = mat_id
+    if smooth:
+        region[write, 0:3] = normal_encoded[write]
+    else:
+        region[write, 0:3] = (np.asarray(triangle.P0_n) + 1) * 0.5
 
 
 def draw_wireframe_triangle(triangle: Triangle, image: np.ndarray) -> None:
@@ -328,6 +338,7 @@ def render(viewport: 'Viewport', width: int, height: int, post_process: list = [
     :param post_process: Ordered list of PostProcess materials to apply after shading
     :return:             Tuple of (image, data_buffer) — both np.ndarray
     """
+    t = time.time()
     materials    = MaterialRegistry()
     image        = np.zeros((height, width, 3))
     data_buffer  = np.zeros((height, width, 7))
@@ -347,7 +358,9 @@ def render(viewport: 'Viewport', width: int, height: int, post_process: list = [
             materials.register(instance.mat)
             render_instance(instance, viewport, data_buffer, width, height, DEBUG)
             i += 1
-            
+
+    print(f"Pass 1 time: {time.time() - t:.2f}s")
+    t = time.time()
     print("Pass 2 : Shading & Material")
     # Pass 2 — Shading: resolve each pixel's material and shade it
     for x in range(len(data_buffer)):
@@ -359,6 +372,8 @@ def render(viewport: 'Viewport', width: int, height: int, post_process: list = [
                     material    = materials.get(material_id)
                     draw_pixel(material, image, data_buffer, x, y, viewport.camera)
 
+    print(f"Pass 2 time: {time.time() - t:.2f}s")
+    t = time.time()
     print("Pass 3 : Post-process")
     # Pass 3 — Post-process: apply screen-space effects in order
     for x in range(len(data_buffer)):
@@ -368,6 +383,7 @@ def render(viewport: 'Viewport', width: int, height: int, post_process: list = [
                 
     # Gamma correction
     image = image ** (1/viewport.camera.gamma)
+    print(f"Pass 3 time: {time.time() - t:.2f}s")
 
     return image, data_buffer
 
