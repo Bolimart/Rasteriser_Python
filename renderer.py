@@ -1,7 +1,7 @@
-import time
 from math import floor, ceil
 from multiprocessing import Pool, get_context
 import numpy as np
+from time import time
 from objects import *
 from viewport import *
 
@@ -88,10 +88,10 @@ def draw_triangle(triangle: Triangle, data_buffer: np.ndarray, view_dist: float,
         smooth = False
 
     # Define the bounding box, clamped to the canva size
-    x_max = min(ceil(max(x0, x1, x2)), width-1)
-    x_min = max(floor(min(x0, x1, x2)), 0)
-    y_max = min(ceil(max(y0, y1, y2)), height-1)
-    y_min = max(floor(min(y0, y1, y2)), 0)
+    x_max = np.clip(ceil(max(x0, x1, x2)), 0, width-1)
+    x_min = np.clip(floor(min(x0, x1, x2)), 0, width-1)
+    y_max = np.clip(ceil(max(y0, y1, y2)), 0, height-1)
+    y_min = np.clip(floor(min(y0, y1, y2)), 0, height-1)
 
     # Create a matrix of all the pixels in the bounding box
     xs = np.arange(x_min, x_max + 1)
@@ -316,74 +316,58 @@ def render_instance(instance: Instance, viewport: 'Viewport', data_buffer: np.nd
             i += 1
 
 
-def render(viewport: 'Viewport', width: int, height: int, post_process: list = [], DEBUG:bool=False) -> tuple:
-    """
-    Render the full scene to an RGB image.
+def render(viewport, width, height, post_process=[], benchmark_data=None, DEBUG=False):
+    t_total = time()
 
-    The render pipeline runs in three passes:
-
-      1. Geometry pass — rasterise all instances into the G-buffer (depth, normals, UVs,
-         material IDs). No shading is done here.
-
-      2. Shading pass — iterate over every pixel, read the material ID from the G-buffer,
-         and call the corresponding material's get_pixel() to produce the final colour.
-         Materials are processed in the order they were registered.
-
-      3. Post-process pass — apply each post-process effect in order. Effects read from
-         the G-buffer and composite onto the already-shaded image.
-
-    :param viewport:     Viewport containing the scene objects, camera, and projection function
-    :param width:        Output image width in pixels
-    :param height:       Output image height in pixels
-    :param post_process: Ordered list of PostProcess materials to apply after shading
-    :return:             Tuple of (image, data_buffer) — both np.ndarray
-    """
-    t = time.time()
-    materials    = MaterialRegistry()
-    image        = np.zeros((height, width, 3))
-    data_buffer  = np.zeros((height, width, 7))
-
+    materials   = MaterialRegistry()
+    image       = np.zeros((height, width, 3))
+    data_buffer = np.zeros((height, width, 7))
     i = 0
-    print("Pass 1 : Geometry")
-    # Pass 1 — Geometry: rasterise all instances into the G-buffer
+
+    # ── Pass 1 — Geometry ──────────────────────────────────────────────────
+    t = time()
     for instance in viewport.objects:
         if type(instance) is ComplexInstance:
-            for inst in instance.instances:
-                print(f"Rendreing instance {i} with {len(inst.model.triangles)} triangles")
-                materials.register(inst.mat)
-                render_instance(inst, viewport, data_buffer, width, height, DEBUG)
+            for inst_ in instance.instances:
+                materials.register(inst_.mat)
+                render_instance(inst_, viewport, data_buffer, width, height, DEBUG)
                 i += 1
         else:
-            print(f"Rendreing instance {i} with {len(instance.model.triangles)} triangles")
             materials.register(instance.mat)
             render_instance(instance, viewport, data_buffer, width, height, DEBUG)
             i += 1
+    if benchmark_data is not None:
+        benchmark_data["time_pass1"] = round(time() - t, 4)
 
-    print(f"Pass 1 time: {time.time() - t:.2f}s")
-    t = time.time()
-    print("Pass 2 : Shading & Material")
-    # Pass 2 — Shading: resolve each pixel's material and shade it
+    # ── Pass 2 — Shading ───────────────────────────────────────────────────
+    t = time()
+    pixels_shaded = 0
     for x in range(len(data_buffer)):
         for y in range(len(data_buffer[0])):
             material_data = int(data_buffer[x, y, 6])
             if material_data != 0:
-                for i in range(material_data.bit_length() // 16 + 1):
-                    material_id = material_data >> 16 * i
+                pixels_shaded += 1
+                for k in range(material_data.bit_length() // 16 + 1):
+                    material_id = material_data >> 16 * k
                     material    = materials.get(material_id)
                     draw_pixel(material, image, data_buffer, x, y, viewport.camera)
+    if benchmark_data is not None:
+        benchmark_data["time_pass2"]   = round(time() - t, 4)
+        benchmark_data["pixels_shaded"] = pixels_shaded
 
-    print(f"Pass 2 time: {time.time() - t:.2f}s")
-    t = time.time()
-    print("Pass 3 : Post-process")
-    # Pass 3 — Post-process: apply screen-space effects in order
-    for x in range(len(data_buffer)):
-        for y in range(len(data_buffer[0])):
-            for pp in post_process:
-                draw_pixel(pp, image, data_buffer, x, y, viewport.camera)
-                
-    # Gamma correction
-    image = image ** (1/viewport.camera.gamma)
-    print(f"Pass 3 time: {time.time() - t:.2f}s")
+    # ── Pass 3 — Post-process + gamma ──────────────────────────────────────
+    t = time()
+    if post_process:
+        for x in range(len(data_buffer)):
+            for y in range(len(data_buffer[0])):
+                for pp in post_process:
+                    draw_pixel(pp, image, data_buffer, x, y, viewport.camera)
+    image = image ** (1 / viewport.camera.gamma)
+    if benchmark_data is not None:
+        benchmark_data["time_pass3"] = round(time() - t, 4)
+
+    if benchmark_data is not None:
+        benchmark_data["time_total"] = round(time() - t_total, 4)
 
     return image, data_buffer
 

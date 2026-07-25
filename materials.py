@@ -387,7 +387,7 @@ class MaterialRegistry:
                 raise OverflowError("Too many materials (max 4096)")
             self._registry[id] = material
             material.id = id
-            print("new material with id", id, "registered")
+            # print("new material with id", id, "registered")
         else:
             # Reuse the existing ID for this identical material
             material.id = self._get_id(material)
