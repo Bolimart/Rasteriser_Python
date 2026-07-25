@@ -1,4 +1,3 @@
-import inspect
 import numpy as np
 
 #——————————[ BLEND FLAGS ]——————————————————————————————————————————————————————————————————————————————————————————————
@@ -219,14 +218,18 @@ class UnlitTexture(UnlitMaterial):
     color : list  | RGB tint multiplied with the texture sample (default white = no tint)
     """
 
-    def __init__(self, atlas, color=[1, 1, 1], cast_shadow=False, double_sided=False):
+    def __init__(self, atlas, color=[1, 1, 1], aliasing=True, cast_shadow=False, double_sided=False):
         super().__init__(color, cast_shadow, double_sided)
+        self.aliasing = aliasing
         self.atlas = atlas
 
     def get_pixel(self, image, data_buffer, x, y, camera) -> np.ndarray:
         """Sample the atlas at (u, v) and multiply by the tint colour."""
         u, v = self.get_uv(data_buffer, x, y)
-        return np.multiply(self.atlas.sample(u, v)[:3], self.color)
+        if self.aliasing:
+            return np.multiply(self.atlas.sample_bilinear(u, v)[:3], self.color)
+        else:
+            return np.multiply(self.atlas.sample(u, v)[:3], self.color)
 
 # LIT MATERIALS
 
@@ -247,9 +250,7 @@ class LitMaterial(Material):
 
         illumination = np.zeros((3))
         for light in self.lights:
-            
-            # Attenuation 
-            illumination += light.get_illumination(self, camera, normal, point)
+            illumination += light.get_illumination(self, camera, point, normal)
 
         if clip:
             return np.clip(illumination, 0, 1)
@@ -259,14 +260,18 @@ class LitMaterial(Material):
 
 class LitTexture (LitMaterial):
     
-    def __init__(self, atlas, lights, ambient=[0.1, 0.1, 0.1], diffuse=[1, 1, 1], specular=[1, 1, 1], shininess=100, reflection=0.5, cast_shadow=False, double_sided=False, blend_mode=BLEND_OPAQUE):
+    def __init__(self, atlas, lights, aliasing=True, ambient=[0.1, 0.1, 0.1], diffuse=[1, 1, 1], specular=[1, 1, 1], shininess=100, reflection=0.5, cast_shadow=False, double_sided=False, blend_mode=BLEND_OPAQUE):
         super().__init__(lights, ambient, diffuse, specular, shininess, reflection, cast_shadow, double_sided, blend_mode)
         self.atlas = atlas
+        self.aliasing = aliasing
         
     def get_pixel(self, image, data_buffer, x, y, camera):
         color = super().get_pixel(image, data_buffer, x, y, camera, False)
         u, v = self.get_uv(data_buffer, x, y)
-        return np.clip(np.multiply(self.atlas.sample(u, v)[:3], color), 0, 1)
+        if self.aliasing:
+            return np.clip(np.multiply(self.atlas.sample_bilinear(u, v)[:3], color), 0, 1)
+        else:
+            return np.clip(np.multiply(self.atlas.sample_bilinear(u, v)[:3], color), 0, 1)
         
 #——————————[ POST PROCESS MATERIALS ]———————————————————————————————————————————————————————————————————————————————————
 

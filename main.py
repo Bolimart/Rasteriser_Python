@@ -1,12 +1,14 @@
 from matplotlib import pyplot
 from renderer import *
 from time import time
+from lights import *
 
 #——————————[ ASSETS ]————————————————————————————————————————————————————————————————————————————————————————————————————
 
 grid_atlas = Atlas(pyplot.imread("grid.png"))
 crate_atlas = Atlas(pyplot.imread("crate.png"))
-teapot = load_obj('models/utah_teapot_reso3.obj', smooth_shading=True)
+tourniquet = load_obj('models/utah_teapot_reso2.obj', smooth_shading=True)
+#pilier = load_obj('models/tourniquet_pilier.obj', smooth_shading=True)
 
 #——————————[ SCENE SETUP ]———————————————————————————————————————————————————————————————————————————————————————————————
 
@@ -32,18 +34,17 @@ cube.set_colours([
 ])
 
 lights = [
-    PointLight(np.array([5, 5, 0]), np.array([1, 1, 1]), np.array([1, 1, 1])),
-    PointLight(np.array([-5, 0, 0]), np.array([0.5, 0.1, 0.3]), np.array([0.5, 0.1, 0.3]), np.array([0.5, 0.1, 0.3]), intensity=0.4),
+    PointLight(np.array([5, 5, 0])),
+    PointLight(np.array([-5, 0, 0]), np.array([0.05, 0.01, 0.03]), np.array([0.5, 0.1, 0.3]), np.array([0.5, 0.1, 0.3]), intensity=0.4),
 ]
 
 # Materials
-grid_shader   = LitTexture(grid_atlas, lights, np.array([0.05, 0.05, 0.05]), np.array([0.7, 0.7, 0.7]), np.array([1, 1, 1]), 50, 1)
-crate_shader  = LitTexture(crate_atlas, lights)
+grid_shader   = LitTexture(grid_atlas, lights,True, np.array([0.05, 0.05, 0.05]), np.array([0.7, 0.7, 0.7]), np.array([1, 1, 1]), 50, 1)
+crate_shader  = LitTexture(crate_atlas, lights, aliasing=True)
 
 # Scene objects
 objects = [
-    make_instance(teapot, Transform(Point3D(-1, 0, 6), Point3D(0.7, 0.7, 0.7), Point3D(-65, 180, 0)), grid_shader),
-    make_instance(teapot, Transform(Point3D(1, -2, 6), Point3D(0.7, 0.7, 0.7), Point3D(-110, 0, 0)), crate_shader)
+    make_instance(tourniquet, Transform(Point3D(0, -2, 5.5), Point3D(1, 1, 1), Point3D(-100, -12, 0)), grid_shader),
 ]
 
 post_process = [
@@ -61,7 +62,7 @@ pyplot.imsave("img/image_wireframe.png", render_wireframe(viewport, 4000, 4000))
 print(f"Done — saved wireframe.png in {time() - t:.3f} seconds")
 
 print("Rendering image:")
-r, d_b = render(viewport, 1000, 1000)
+r, d_b = render(viewport, 400, 400)
 
 # Build a UV visualisation image from G-buffer channels 4 and 5
 uv = np.zeros((len(d_b), len(d_b[0]), 3))

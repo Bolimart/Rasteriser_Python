@@ -42,8 +42,8 @@ def interp(i0: float, d0: float, i1: float, d1: float) -> list:
     :param d1: Value at i1
     :return:   List of rounded integer values, one per step from i0 to i1 inclusive
     """
-    i0 = np.int64(i0)
-    i1 = np.int64(i1)
+    i0 = int(i0)
+    i1 = int(i1)
     if i0 == i1:
         return [d0]
     values = []
@@ -55,157 +55,79 @@ def interp(i0: float, d0: float, i1: float, d1: float) -> list:
     return values
 
 
-def interp_float(i0: float, d0: float, i1: float, d1: float) -> list:
-    """
-    Interpolate float values of d along the integer range [i0, i1].
-
-    Used for depth and UV interpolation along triangle edges, where rounding
-    would destroy the precision needed for correct depth testing and texture mapping.
-
-    :param i0: Start index (scanline or column)
-    :param d0: Float value at i0
-    :param i1: End index
-    :param d1: Float value at i1
-    :return:   List of float values, one per step from i0 to i1 inclusive
-    """
-    i0, i1 = np.int64(i0), np.int64(i1)
-    if i0 == i1:
-        return [float(d0)]
-    values = []
-    a = (d1 - d0) / (i1 - i0)
-    d = d0
-    for i in range(i0, i1 + 1):
-        values.append(float(d))
-        d += a
-    return values
-
 #——————————[ RASTERISATION ]—————————————————————————————————————————————————————————————————————————————————————————————
 
-def draw_triangle(triangle: Triangle, data_buffer: np.ndarray, view_dist: float, mat_id: int) -> None:
-    
-    def make_edge_lists(y0, y1, y2, v0, v1, v2):
-        """Interpolate a single attribute along all three edges, return (left, right)."""
-        e01 = interp_float(y0, v0, y1, v1)
-        e12 = interp_float(y1, v1, y2, v2)
-        e02 = interp_float(y0, v0, y2, v2)
-        if len(e01) > 0:
-            e01.pop()
-        e012 = e01 + e12
-        return e02, e012 # long edge, short edges — caller decides left/right
 
-    x0, y0, depth0 = triangle.P0
-    x1, y1, depth1 = triangle.P1
-    x2, y2, depth2 = triangle.P2
+def draw_triangle(triangle: Triangle, data_buffer: np.ndarray, view_dist: float, mat_id: int) -> None:
+
+    width, height, _ = data_buffer.shape
+
+    x0, y0, z0 = triangle.P0
+    x1, y1, z1 = triangle.P1
+    x2, y2, z2 = triangle.P2
+
+    area = (x1 - x0) * (y2 - y0) - (x2 - x0) * (y1 - y0)
+
+    if area == 0:
+        return
+
     u0, v0 = triangle.P0_uv
     u1, v1 = triangle.P1_uv
     u2, v2 = triangle.P2_uv
+    u0, v0 = u0 * z0, v0 * z0
+    u1, v1 = u1 * z1, v1 * z1
+    u2, v2 = u2 * z2, v2 * z2,
     n0 = triangle.P0_n
     n1 = triangle.P1_n
     n2 = triangle.P2_n
-    u0, v0 = u0 * depth0, v0 * depth0
-    u1, v1 = u1 * depth1, v1 * depth1
-    u2, v2 = u2 * depth2, v2 * depth2
-    
+
     smooth = True
-    if (n0[0] == n1[0] and n0[0] == n2[0]) and (n0[1] == n1[1] and n0[1] == n2[1]) and (n0[2] == n1[2] and n0[2] == n2[2]):
+    if (n0[0] == n1[0] and n0[0] == n2[0]) and (n0[1] == n1[1] and n0[1] == n2[1]) and (
+            n0[2] == n1[2] and n0[2] == n2[2]):
         smooth = False
 
-    # Sort ALL attributes together by y, once
-    if y1 < y0: x0,x1=swap(x0,x1); y0,y1=swap(y0,y1); depth0,depth1=swap(depth0,depth1); u0,u1=swap(u0,u1); v0,v1=swap(v0,v1); n0,n1=swap(n0,n1)
-    if y2 < y0: x0,x2=swap(x0,x2); y0,y2=swap(y0,y2); depth0,depth2=swap(depth0,depth2); u0,u2=swap(u0,u2); v0,v2=swap(v0,v2); n0,n2=swap(n0,n2)
-    if y2 < y1: x1,x2=swap(x1,x2); y1,y2=swap(y1,y2); depth1,depth2=swap(depth1,depth2); u1,u2=swap(u1,u2); v1,v2=swap(v1,v2); n1,n2=swap(n1,n2)
-    
-    # Interpolate each attribute along edges using the same sorted y values
-    x02,  x012  = make_edge_lists(y0, y1, y2, x0,     x1,     x2,)
-    d02,  d012  = make_edge_lists(y0, y1, y2, depth0, depth1, depth2)
-    u02,  u012  = make_edge_lists(y0, y1, y2, u0,     u1,     u2,)
-    v02,  v012  = make_edge_lists(y0, y1, y2, v0,     v1,     v2,)
-    if smooth:
-        n002,  n0012  = make_edge_lists(y0, y1, y2, n0[0], n1[0], n2[0])
-        n102,  n1012  = make_edge_lists(y0, y1, y2, n0[1], n1[1], n2[1])
-        n202,  n2012  = make_edge_lists(y0, y1, y2, n0[2], n1[2], n2[2])
-    
+    # Define the bounding box, clamped to the canva size
+    x_max = min(ceil(max(x0, x1, x2)), width-1)
+    x_min = max(floor(min(x0, x1, x2)), 0)
+    y_max = min(ceil(max(y0, y1, y2)), height-1)
+    y_min = max(floor(min(y0, y1, y2)), 0)
 
-    # Determine left/right using x, then apply same assignment to all attributes
-    m = min(floor(len(x012) / 2), len(x02) - 1, len(x012) - 1)
-    if x02[m] < x012[m]:
-        x_left,  x_right  = x02,  x012
-        d_left,  d_right  = d02,  d012
-        u_left,  u_right  = u02,  u012
-        v_left,  v_right  = v02,  v012
-        if smooth:
-            n0_left, n0_right = n002, n0012
-            n1_left, n1_right = n102, n1012
-            n2_left, n2_right = n202, n2012
-    else:
-        x_left,  x_right  = x012, x02
-        d_left,  d_right  = d012, d02
-        u_left,  u_right  = u012, u02
-        v_left,  v_right  = v012, v02
-        if smooth:
-            n0_left, n0_right = n0012, n002
-            n1_left, n1_right = n1012, n102 
-            n2_left, n2_right = n2012, n202
+    # Loop over the bounding box
+    for y in range(y_min, y_max + 1): # Can be parralellized (for each row for example)
+        for x in range(x_min, x_max + 1):
+            px = x + 0.5 ; py = y + 0.5
+            e0 = (x1 - px)*(y2 - py) - (x2 - px)*(y1 - py)
+            e1 = (x2 - px)*(y0 - py) - (x0 - px)*(y2 - py)
+            e2 = (x0 - px)*(y1 - py) - (x1 - px)*(y0 - py)
 
-    y0, y2 = floor(y0), ceil(y2)
-    if y0 == y2:
-        y2 = y0 + 1
+            # Check if the pixel is inside the triangle
+            if (e0 >= 0 and e1 >= 0 and e2 >= 0) or (e0 <= 0 and e1 <= 0 and e2 <= 0):
+                # Barycentric weights
+                w0 = e0/area
+                w1 = e1/area
+                w2 = 1-w0-w1
 
-    i = 0
-    for y in range(y0, y2): 
-        i = y - y0
-        if i >= len(x_left) or i >= len(x_right):
-            continue
-        xl,  xr  = int(x_left[i]), int(x_right[i])
-        dl,  dr  = d_left[i],  d_right[i]
-        ul,  ur  = u_left[i],  u_right[i]
-        vl,  vr  = v_left[i],  v_right[i]
-        if smooth:
-            n0l, n0r = n0_left[i], n0_right[i]
-            n1l, n1r = n1_left[i], n1_right[i]
-            n2l, n2r = n2_left[i], n2_right[i]
+                inv_z = w0*z0 + w1*z1 + w2*z2
 
-        xl = floor(x_left[i])
-        xr = ceil(x_right[i])
+                if data_buffer[y, x, 3] >= inv_z:
+                    continue
 
-        if xl == xr:
-            xr = xl + 1
+                u = (w0*u0 + w1*u1 + w2*u2) / inv_z
+                v = (w0*v0 + w1*v1 + w2*v2) / inv_z
+                if smooth:
+                    if smooth:
+                        n = w0 * n0 + w1 * n1 + w2 * n2
+                        n = n / np.linalg.norm(n)
+                        normal_encoded = (n + 1) * 0.5
+                    else:
+                        normal_encoded = (triangle.P0_n + 1) * 0.5
+                else:
+                    normal_encoded = (triangle.P0_n + 1) * 0.5
 
-        for x in range(xl, xr):
-            i+=1
-            #if x < 0 or x >= width or y < 0 or y >= height:
-            #    continue
-
-            t = (x - xl) / (xr - xl) if xr != xl else 0
-            d         = float(lerp(dl, dr, t))
-            inv_depth = min(max(d / view_dist, 0), 1) if d != 0 else 0
-
-            if data_buffer[y, x, 3] >= inv_depth:
-                continue
-
-            u  = lerp(ul, ur, t) / d if d != 0 else 0
-            v  = lerp(vl, vr, t) / d if d != 0 else 0
-            if smooth:
-                n0 = lerp(n0l, n0r, t)  # Perspective-correct interpolation
-                n1 = lerp(n1l, n1r, t)
-                n2 = lerp(n2l, n2r, t)
-
-                n = np.array([
-                    lerp(n0l, n0r, t),
-                    lerp(n1l, n1r, t),
-                    lerp(n2l, n2r, t),
-                ])
-                n = n / np.linalg.norm(n)  # ← renormalise
-
-                normal_encoded = (n + 1) * 0.5
-            else:
-                normal_encoded = (triangle.P0_n + 1)*0.5
-
-            data_buffer[y, x, 0:3] = normal_encoded
-            data_buffer[y, x, 3]   = inv_depth
-            data_buffer[y, x, 4:6] = [u, v]
-            data_buffer[y, x, 6]   = mat_id
-    #print(f"y0={y0}, y2={y2}, x_left={x_left}, x_right={x_right}")
+                data_buffer[y, x, 0:3] = normal_encoded
+                data_buffer[y, x, 3] = inv_z
+                data_buffer[y, x, 4:6] = [u, v]
+                data_buffer[y, x, 6] = mat_id
 
 
 def draw_wireframe_triangle(triangle: Triangle, image: np.ndarray) -> None:

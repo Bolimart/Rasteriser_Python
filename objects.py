@@ -497,95 +497,6 @@ class ComplexInstance(Instance):
             transformed += instance.apply_transform()
         return transformed
 
-
-#——————————[ LIGHTS ]———————————————————————————————————————————————————————————————————————————————————————————————————
-
-class PointLight:
-    """
-    A point light source with a position, colour, and intensity.
-
-    [ FIELDS ]
-
-    colour     : list  | RGB colour of the light in [0, 1]
-    pos       : np.ndarray | World-space position of the light
-    intensity : float | Brightness multiplier
-    """
-
-    def __init__(self, pos, ambient, diffuse, specular=[1, 1, 1], intensity:float=1, kq=0.0019, kc=1.0, kl=0.002):
-        self.specular = np.array(specular)
-        self.diffuse = np.array(diffuse)
-        self.ambient = np.array(ambient)
-        self.pos = pos
-        self.intensity = intensity
-        self.kq = kq
-        self.kc = kc
-        self.kl = kl
-        
-    def get_illumination(self, mat, camera, point, normal):
-        # Ambient
-        ambient = np.multiply(mat.ambient, self.ambient)
-
-        # Diffuse
-        light_dir = normalize(self.pos - point)
-        diffuse = np.multiply(
-            np.multiply(mat.diffuse, self.diffuse),
-            max(np.dot(normal, light_dir), 0)
-        )
-
-        # Specular (Blinn-Phong)
-        view_dir = normalize(camera.pos - point)
-        H = normalize(light_dir + view_dir)  # Halfway vector
-        specular = np.multiply(
-            np.multiply(mat.specular, self.specular),
-            max(np.dot(normal, H), 0) ** mat.shininess
-        )
-        
-        d = np.linalg.norm(self.pos - point)
-        attenuation = 1.0 / (self.kc + self.kl * d + self.kq * d**2)
-        return (ambient + diffuse + specular) * attenuation * self.intensity 
-
-class DirectionalLight:
-    
-    def __init__(self, dir, ambient, diffuse, specular=[1, 1, 1], intensity:float=1):
-        self.specular  = np.array(specular)
-        self.diffuse   = np.array(diffuse)
-        self.ambient   = np.array(ambient)
-        self.dir       = dir
-        self.intensity = intensity
-        
-    def get_illumination(self, mat, camera, point, normal):
-        # Ambient
-        ambient = np.multiply(mat.ambient, self.ambient)
-
-        # Diffuse
-        light_dir = normalize(self.pos - point)
-        diffuse = np.multiply(
-            np.multiply(mat.diffuse, self.diffuse),
-            max(np.dot(normal, light_dir), 0)
-        )
-
-        # Specular (Blinn-Phong)
-        view_dir = normalize(camera.pos - point)
-        H = normalize(light_dir + view_dir)  # Halfway vector
-        specular = np.multiply(
-            np.multiply(mat.specular, self.specular),
-            max(np.dot(normal, H), 0) ** mat.shininess
-        )
-        return ambient + diffuse + specular
-        
-class ConeLight:
-    
-    def __init__(self, pos, dir, radius, ambient, diffuse, specular=[1, 1, 1], intensity:float=1):
-        self.specular = np.array(specular)
-        self.diffuse = np.array(diffuse)
-        self.ambient = np.array(ambient)
-        self.pos = pos
-        self.dir = dir
-        self.radius = radius
-        self.intensity = intensity
-
-# TODO: Cone light (spot light)
-
 #——————————[ ATLAS ]————————————————————————————————————————————————————————————————————————————————————————————————————
 
 class Atlas:
@@ -624,6 +535,41 @@ class Atlas:
         v = min(max(v, 0), 1)
         tx = int(u * (w - 1))
         ty = int((1 - v) * (h - 1))  # flip V: row 0 is top, but UV (0,0) is bottom-left
-        if type(self.texture[ty, tx, 0]) is np.uint8:
+        if self.texture.dtype == np.uint8 :
             return np.clip(self.texture[ty, tx] / 255.0, 0, 1)
-        return self.texture[ty, tx]                                       
+        return self.texture[ty, tx]
+
+    def sample_bilinear(self, u: float, v: float) -> np.ndarray:
+        h, w = self.texture.shape[:2]
+        u = min(max(u, 0.0), 1.0)
+        v = min(max(v, 0.0), 1.0)
+
+        # Continuous texel coordinates
+        tx = u * (w - 1)
+        ty = (1 - v) * (h - 1)
+
+        # Four surrounding texel indices
+        x0, y0 = int(tx), int(ty)
+        x1 = min(x0 + 1, w - 1)
+        y1 = min(y0 + 1, h - 1)
+
+        # Fractional parts (how far between the two texels)
+        fx = tx - x0
+        fy = ty - y0
+
+        # Fetch the four texels
+        def fetch(y, x):
+            c = self.texture[y, x].astype(np.float64)
+            if self.texture.dtype == np.uint8:
+                c /= 255.0
+            return c
+
+        c00 = fetch(y0, x0)  # top-left
+        c10 = fetch(y0, x1)  # top-right
+        c01 = fetch(y1, x0)  # bottom-left
+        c11 = fetch(y1, x1)  # bottom-right
+
+        # Bilinear blend
+        top = c00 * (1 - fx) + c10 * fx
+        bottom = c01 * (1 - fx) + c11 * fx
+        return np.clip(top * (1 - fy) + bottom * fy, 0, 1)
