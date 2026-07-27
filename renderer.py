@@ -157,29 +157,41 @@ def draw_line(line: 'Line', colour: list, image: np.ndarray) -> None:
     :param colour: RGB colour in [0, 1]
     :param image: Image array of shape (height, width, 3)
     """
-    h, w = image.shape[:2]
-    x0, y0 = int(line.P0[0]), int(line.P0[1])
-    x1, y1 = int(line.P1[0]), int(line.P1[1])
 
-    # Shallow line — step along X, interpolate Y
-    if abs(x1 - x0) > abs(y1 - y0):
-        if x0 > x1:
-            x0, x1 = swap(x0, x1)
-            y0, y1 = swap(y0, y1)
-        ys = interp(x0, y0, x1, y1)
-        for x in range(x0, x1 + 1):
-            if 0 <= x < w and 0 <= ys[x - x0] < h:
-                image[ys[x - x0], x] = colour
+    def draw_line(line: 'Line', colour: list, image: np.ndarray) -> None:
+        """
+        Draw a line segment onto the image using Bresenham-style integer interpolation.
 
-    # Steep line — step along Y, interpolate X
-    else:
-        if y0 > y1:
-            x0, x1 = swap(x0, x1)
-            y0, y1 = swap(y0, y1)
-        xs = interp(y0, x0, y1, x1)
-        for y in range(y0, y1 + 1):
-            if 0 <= y < h and 0 <= xs[y - y0] < w:
-                image[y, xs[y - y0]] = colour
+        The line is rasterised along its dominant axis (X for shallow lines, Y for steep),
+        avoiding gaps that would appear if stepping along the shorter axis.
+
+        :param line:  Line object with P0 and P1 endpoints
+        :param colour: RGB colour in [0, 1]
+        :param image: Image array of shape (height, width, 3)
+        """
+        h, w = image.shape[:2]
+        x0, y0 = int(line.P0[0]), int(line.P0[1])
+        x1, y1 = int(line.P1[0]), int(line.P1[1])
+
+        # Shallow line — step along X, interpolate Y
+        if abs(x1 - x0) > abs(y1 - y0):
+            if x0 > x1:
+                x0, x1 = swap(x0, x1)
+                y0, y1 = swap(y0, y1)
+            ys = interp(x0, y0, x1, y1)
+            xs = np.arange(x0, x1 + 1)
+            mask = (ys < h) & (ys >= 0) & (xs < w) & (xs >= 0)
+            image[ys[mask], xs[mask]] = colour
+
+        # Steep line — step along Y, interpolate X
+        else:
+            if y0 > y1:
+                x0, x1 = swap(x0, x1)
+                y0, y1 = swap(y0, y1)
+            xs = interp(y0, x0, y1, x1)
+            ys = np.arange(y0, y1 + 1)
+            mask = (ys < h) & (ys >= 0) & (xs < w) & (xs >= 0)
+            image[ys[mask], xs[mask]] = colour
 
 #——————————[ SHADING ]————————————————————————————————————————————————————————————————————————————————————————————————————
 
@@ -258,7 +270,7 @@ def perspective_projection(triangle: Triangle, camera: 'Camera', width: int, hei
 
 #——————————[ RENDER ]————————————————————————————————————————————————————————————————————————————————————————————————————
 
-def render_wireframe_instance(instance: Instance, viewport: 'Viewport', image: np.ndarray, width: int, height: int, DEBUG=False) -> None:
+def render_wireframe_instance(instance: Instance, viewport: 'Viewport', image: np.ndarray, width: int, height: int) -> None:
     """
     Render a single instance as a wireframe by drawing the edges of each visible triangle.
 
@@ -268,18 +280,12 @@ def render_wireframe_instance(instance: Instance, viewport: 'Viewport', image: n
     :param width:    Output image width in pixels
     :param height:   Output image height in pixels
     """
-    if DEBUG:
-        t_len = len(instance.model.triangles)
-        i = 1
     for t in instance.apply_transform():
         projected = viewport.project_func(t, viewport.camera, width, height)
         draw_wireframe_triangle(projected, image)
-        if DEBUG:
-            print(f"{i/t_len*100}")
-            i += 1
 
 
-def render_instance(instance: Instance, viewport: 'Viewport', data_buffer: np.ndarray, width: int, height: int, DEBUG=False) -> None:
+def render_instance(instance: Instance, viewport: 'Viewport', data_buffer: np.ndarray, width: int, height: int) -> None:
     """
     Rasterise a single instance into the G-buffer.
 
@@ -297,19 +303,13 @@ def render_instance(instance: Instance, viewport: 'Viewport', data_buffer: np.nd
     :param height:     Output image height in pixels
     """
     draw_back_faces = (instance.mat.id >> 3) & 0x1  # read double-sided flag from material ID
-    if DEBUG:
-        t_len = len(instance.model.triangles)
-        i = 1
     for t in instance.apply_transform():
         if viewport.camera.in_view(t, draw_back_faces):
             projected = viewport.project_func(t, viewport.camera, width, height)
             draw_triangle(projected, data_buffer, viewport.camera.view_dist, instance.mat.id)
-        if DEBUG:
-            print(f"{i/t_len*100}")
-            i += 1
 
 
-def render(viewport, width, height, post_process=[], benchmark_data=None, DEBUG=False):
+def render(viewport, width, height, post_process=[], benchmark_data=None):
     t_total = time()
 
     materials   = MaterialRegistry()
@@ -323,11 +323,11 @@ def render(viewport, width, height, post_process=[], benchmark_data=None, DEBUG=
         if type(instance) is ComplexInstance:
             for inst_ in instance.instances:
                 materials.register(inst_.mat)
-                render_instance(inst_, viewport, data_buffer, width, height, DEBUG)
+                render_instance(inst_, viewport, data_buffer, width, height)
                 i += 1
         else:
             materials.register(instance.mat)
-            render_instance(instance, viewport, data_buffer, width, height, DEBUG)
+            render_instance(instance, viewport, data_buffer, width, height)
             i += 1
     if benchmark_data is not None:
         benchmark_data["time_pass1"] = round(time() - t, 4)
