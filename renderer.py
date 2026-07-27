@@ -30,7 +30,7 @@ def lerp(a: float, b: float, t: float) -> float:
     return a + t * (b - a)
 
 
-def interp(i0: float, d0: float, i1: float, d1: float) -> list:
+def interp(i0: float, d0: float, i1: float, d1: float) -> np.array:
     """
     Interpolate integer values of d along the integer range [i0, i1].
 
@@ -43,17 +43,10 @@ def interp(i0: float, d0: float, i1: float, d1: float) -> list:
     :param d1: Value at i1
     :return:   List of rounded integer values, one per step from i0 to i1 inclusive
     """
-    i0 = int(i0)
-    i1 = int(i1)
+    i0, i1 = int(i0), int(i1)
     if i0 == i1:
-        return [d0]
-    values = []
-    a = (d1 - d0) / (i1 - i0)
-    d = d0
-    for i in range(i0, i1 + 1):
-        values.append(round(d))
-        d = d + a
-    return values
+        return np.array([d0])
+    return np.round(np.linspace(d0, d1, i1 - i0 + 1)).astype(int)
 
 
 #——————————[ RASTERISATION ]—————————————————————————————————————————————————————————————————————————————————————————————
