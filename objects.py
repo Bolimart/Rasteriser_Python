@@ -1,4 +1,5 @@
 import numpy as np
+from math import ceil, floor
 from materials import *
 
 #——————————[ UTILITIES ]————————————————————————————————————————————————————————————————————————————————————————————————
@@ -166,7 +167,8 @@ class Triangle:
                  P2_uv: list = [1, 1],
                  P0_n: list = None,
                  P1_n: list = None,
-                 P2_n: list = None) -> None:
+                 P2_n: list = None,
+                 mat_id: int = None) -> None:
         # Vertices
         self.P0 = P0
         self.P1 = P1
@@ -184,7 +186,10 @@ class Triangle:
         self.V1 = P2 - P1
         self.V2 = P0 - P2
 
+        self.BB = None
+
         self.colour = colour
+        self.mat_id = mat_id
 
     def lines(self) -> tuple:
         """
@@ -206,6 +211,23 @@ class Triangle:
         A = self.P1 - self.P0
         B = self.P2 - self.P0
         return normalize(np.cross(A, B))
+
+    def get_bounding_box(self, width: int, height: int):
+
+        if self.BB is None:
+            x0, y0, z0 = self.P0
+            x1, y1, z1 = self.P1
+            x2, y2, z2 = self.P2
+
+            # Define the bounding box, clamped to the canva size
+            x_max = np.clip(ceil(max(x0, x1, x2)), 0, width-1)
+            x_min = np.clip(floor(min(x0, x1, x2)), 0, width-1)
+            y_max = np.clip(ceil(max(y0, y1, y2)), 0, height-1)
+            y_min = np.clip(floor(min(y0, y1, y2)), 0, height-1)
+
+            self.BB = np.array([x_min, y_min, x_max, y_max])
+
+        return self.BB
 
 #——————————[ MODEL ]————————————————————————————————————————————————————————————————————————————————————————————————————
 
@@ -347,6 +369,11 @@ class Instance:
         self.model     = model
         self.transform = transform
         self.mat       = material
+        self.apply_material()
+
+    def apply_material(self):
+        for t in self.model.triangles:
+            t.mat_id = self.mat.id
 
     def apply_transform(self) -> list:
         """
@@ -391,7 +418,8 @@ class Instance:
             P0, P1, P2,
             t.colour,
             t.P0_uv, t.P1_uv, t.P2_uv,
-            P0_n, P1_n, P2_n
+            P0_n, P1_n, P2_n,
+            self.mat.id
         )
 
     def rotate(self, t: Triangle) -> Triangle:
@@ -445,7 +473,8 @@ class Instance:
             P0, P1, P2,
             t.colour,
             t.P0_uv, t.P1_uv, t.P2_uv,
-            P0_n, P1_n, P2_n
+            P0_n, P1_n, P2_n,
+            self.mat.id
         )
 
     def translate(self, t: Triangle) -> Triangle:
@@ -458,7 +487,7 @@ class Instance:
         P0 = t.P0 + self.transform.pos
         P1 = t.P1 + self.transform.pos
         P2 = t.P2 + self.transform.pos
-        return Triangle(P0, P1, P2, t.colour, t.P0_uv, t.P1_uv, t.P2_uv, t.P0_n, t.P1_n, t.P2_n)
+        return Triangle(P0, P1, P2, t.colour, t.P0_uv, t.P1_uv, t.P2_uv, t.P0_n, t.P1_n, t.P2_n, self.mat.id)
 
 
 class ComplexInstance(Instance):

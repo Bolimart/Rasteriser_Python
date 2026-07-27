@@ -1,5 +1,6 @@
 from math import floor, ceil
-from multiprocessing import Pool, get_context
+import concurrent.futures as cf
+import os
 import numpy as np
 from time import time
 from objects import *
@@ -55,13 +56,22 @@ def interp(i0: float, d0: float, i1: float, d1: float) -> list:
         d = d + a
     return values
 
+def clamp_bounding_box(BB: np.array, width: int, height: int):
+    x_min = np.clip((BB[0]), 0, width - 1)
+    x_max = np.clip((BB[1]), 0, width - 1)
+    y_min = np.clip((BB[2]), 0, height - 1)
+    y_max = np.clip((BB[3]), 0, height - 1)
+    return np.array([x_min, y_min, x_max, y_max])
 
 #——————————[ RASTERISATION ]—————————————————————————————————————————————————————————————————————————————————————————————
 
 
-def draw_triangle(triangle: Triangle, data_buffer: np.ndarray, view_dist: float, mat_id: int) -> None:
+def draw_triangle(triangle: Triangle, data_buffer: np.ndarray, mat_id: int, tile_x=0, tile_y=0, tile_size=None) -> None:
 
     width, height, _ = data_buffer.shape
+
+    if tile_size is None:
+        tile_size = max(width, height)
 
     x0, y0, z0 = triangle.P0
     x1, y1, z1 = triangle.P1
@@ -88,10 +98,12 @@ def draw_triangle(triangle: Triangle, data_buffer: np.ndarray, view_dist: float,
         smooth = False
 
     # Define the bounding box, clamped to the canva size
-    x_max = np.clip(ceil(max(x0, x1, x2)), 0, width-1)
-    x_min = np.clip(floor(min(x0, x1, x2)), 0, width-1)
-    y_max = np.clip(ceil(max(y0, y1, y2)), 0, height-1)
-    y_min = np.clip(floor(min(y0, y1, y2)), 0, height-1)
+    BB = triangle.get_bounding_box(width, height)
+    x_min, y_min, x_max, y_max = BB
+    x_min = np.clip(x_min, tile_x, tile_x + tile_size - 1)
+    x_max = np.clip(x_max, tile_x, tile_x + tile_size - 1)
+    y_min = np.clip(y_min, tile_y, tile_y + tile_size - 1)
+    y_max = np.clip(y_max, tile_y, tile_y + tile_size - 1)
 
     # Create a matrix of all the pixels in the bounding box
     xs = np.arange(x_min, x_max + 1)
@@ -103,7 +115,10 @@ def draw_triangle(triangle: Triangle, data_buffer: np.ndarray, view_dist: float,
     e2 = (x0 - px) * (y1 - py) - (x1 - px) * (y0 - py)
 
     # Check if each pixel is inside the triangle -> boolean mask of the pixels inside
-    inside = ((e0 >= 0) & (e1 >= 0) & (e2 >= 0)) | ((e0 <= 0) & (e1 <= 0) & (e2 <= 0))
+    if area > 0:  # front face
+        inside = (e0 >= 0) & (e1 >= 0) & (e2 >= 0)
+    else:  # back face (double-sided material)
+        inside = (e0 <= 0) & (e1 <= 0) & (e2 <= 0)
 
     # Barycentric weights
     w0 = e0 / area
@@ -261,7 +276,7 @@ def perspective_projection(triangle: Triangle, camera: 'Camera', width: int, hei
     P1 = project_vertex(triangle.P1)
     P2 = project_vertex(triangle.P2)
 
-    return Triangle(P0, P1, P2, triangle.colour, triangle.P0_uv, triangle.P1_uv, triangle.P2_uv, triangle.P0_n, triangle.P1_n, triangle.P2_n)
+    return Triangle(P0, P1, P2, triangle.colour, triangle.P0_uv, triangle.P1_uv, triangle.P2_uv, triangle.P0_n, triangle.P1_n, triangle.P2_n, triangle.mat_id)
 
 #——————————[ RENDER ]————————————————————————————————————————————————————————————————————————————————————————————————————
 
@@ -285,8 +300,16 @@ def render_wireframe_instance(instance: Instance, viewport: 'Viewport', image: n
             print(f"{i/t_len*100}")
             i += 1
 
+def render_tile(ty, tx, tile_triangles, data_buffer, TILE_SIZE):
+    if len(tile_triangles) == 0:
+        return
+    for triangle in tile_triangles:
+        mat_id = triangle.mat_id
+        draw_triangle(triangle, data_buffer, mat_id,
+                      tile_x=tx * TILE_SIZE, tile_y=ty * TILE_SIZE,
+                      tile_size=TILE_SIZE)
 
-def render_instance(instance: Instance, viewport: 'Viewport', data_buffer: np.ndarray, width: int, height: int, DEBUG=False) -> None:
+def process_instance(instance: Instance, viewport: 'Viewport', tiles, tile_size, data_buffer: np.ndarray, width: int, height: int) -> None:
     """
     Rasterise a single instance into the G-buffer.
 
@@ -304,46 +327,69 @@ def render_instance(instance: Instance, viewport: 'Viewport', data_buffer: np.nd
     :param height:     Output image height in pixels
     """
     draw_back_faces = (instance.mat.id >> 3) & 0x1  # read double-sided flag from material ID
-    if DEBUG:
-        t_len = len(instance.model.triangles)
-        i = 1
+
     for t in instance.apply_transform():
-        if viewport.camera.in_view(t, draw_back_faces):
-            projected = viewport.project_func(t, viewport.camera, width, height)
-            draw_triangle(projected, data_buffer, viewport.camera.view_dist, instance.mat.id)
-        if DEBUG:
-            print(f"{i/t_len*100}")
-            i += 1
+        if not viewport.camera.in_view(t, draw_back_faces):
+            continue
+
+        projected = viewport.project_func(t, viewport.camera, width, height)
+
+        # Get the BB of the triangle
+        BB = projected.get_bounding_box(width, height)
+        x_min, y_min, x_max, y_max = BB
+
+        if x_min >= x_max or y_min >= y_max:
+            continue
+
+        # Identifier les tuiles intersectées
+        tx_min = x_min // tile_size
+        tx_max = min(x_max // tile_size, len(tiles[0]) - 1)
+        ty_min = y_min // tile_size
+        ty_max = min(y_max // tile_size, len(tiles) - 1)
+
+        # Ajouter le triangle à chaque tuile intersectée
+        for ty in range(ty_min, ty_max + 1):
+            for tx in range(tx_min, tx_max + 1):
+                tiles[ty][tx].append(projected)
 
 
-def render(viewport, width, height, post_process=[], benchmark_data=None, DEBUG=False):
+def render(viewport, width, height, post_process=[], tile_size=32, benchmark_data=None):
     t_total = time()
 
     materials   = MaterialRegistry()
     image       = np.zeros((height, width, 3))
     data_buffer = np.zeros((height, width, 7))
-    i = 0
+
+    tiles = [[[] for _ in range(ceil(width / tile_size))]
+             for _ in range(ceil(height / tile_size))]
 
     # ── Pass 1 — Geometry ──────────────────────────────────────────────────
     t = time()
-    for instance in viewport.objects:
-        if type(instance) is ComplexInstance:
-            for inst_ in instance.instances:
-                materials.register(inst_.mat)
-                render_instance(inst_, viewport, data_buffer, width, height, DEBUG)
-                i += 1
-        else:
-            materials.register(instance.mat)
-            render_instance(instance, viewport, data_buffer, width, height, DEBUG)
-            i += 1
+    with cf.ThreadPoolExecutor(max_workers=os.cpu_count()) as executor:
+
+        for instance in viewport.objects:
+            if type(instance) is ComplexInstance:
+                for inst_ in instance.instances:
+                    materials.register(inst_.mat)
+                    # process the instance to separate the triangles into tiles for parallel rendering
+                    process_instance(inst_, viewport, tiles, tile_size, data_buffer, width, height)
+            else:
+                materials.register(instance.mat)
+                process_instance(instance, viewport, tiles, tile_size, data_buffer, width, height)
+
+            # Render each tile parallelly
+            for ty in range(len(tiles)):
+                for tx in range(len(tiles[ty])):
+                    executor.submit(render_tile, ty, tx, tiles[ty][tx], data_buffer, tile_size)
+
     if benchmark_data is not None:
         benchmark_data["time_pass1"] = round(time() - t, 4)
 
     # ── Pass 2 — Shading ───────────────────────────────────────────────────
     t = time()
     pixels_shaded = 0
-    for x in range(len(data_buffer)):
-        for y in range(len(data_buffer[0])):
+    for x in range(height):
+        for y in range(width):
             material_data = int(data_buffer[x, y, 6])
             if material_data != 0:
                 pixels_shaded += 1
@@ -358,8 +404,8 @@ def render(viewport, width, height, post_process=[], benchmark_data=None, DEBUG=
     # ── Pass 3 — Post-process + gamma ──────────────────────────────────────
     t = time()
     if post_process:
-        for x in range(len(data_buffer)):
-            for y in range(len(data_buffer[0])):
+        for x in range(height):
+            for y in range(width):
                 for pp in post_process:
                     draw_pixel(pp, image, data_buffer, x, y, viewport.camera)
     image = image ** (1 / viewport.camera.gamma)
@@ -370,8 +416,6 @@ def render(viewport, width, height, post_process=[], benchmark_data=None, DEBUG=
         benchmark_data["time_total"] = round(time() - t_total, 4)
 
     return image, data_buffer
-
-# TODO: Camera rotation
 
 
 def render_wireframe(viewport: 'Viewport', width: int, height: int, DEBUG:bool=False) -> np.ndarray:

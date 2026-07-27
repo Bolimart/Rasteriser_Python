@@ -7,8 +7,8 @@ from lights import *
 
 grid_atlas = Atlas(pyplot.imread("grid.png"))
 crate_atlas = Atlas(pyplot.imread("crate.png"))
-utah_teapot2 = load_obj('models/utah_teapot_reso2.obj', smooth_shading=True)
-utah_teapot = load_obj('models/utah_teapot.obj', smooth_shading=True)
+utah_teapot2 = load_obj('models/utah_teapot_reso3.obj', smooth_shading=True)
+utah_teapot = load_obj('models/utah_teapot_reso1.obj', smooth_shading=True)
 #pilier = load_obj('models/tourniquet_pilier.obj', smooth_shading=True)
 
 #——————————[ SCENE SETUP ]———————————————————————————————————————————————————————————————————————————————————————————————
@@ -42,7 +42,7 @@ def inst(model, shader, pos=(0, -2, 5.5), rot=(-100, -12, 0), scale=(1, 1, 1)):
 
 # Scene objects
 objects = [
-            inst(utah_teapot,  grid_shader, pos=( 1, -2, 5.5)),
+            inst(utah_teapot,  grid_shader, pos=(1, -2, 5.5)),
             inst(utah_teapot2, grid_shader, pos=(-1, -2, 5.5)),
         ]
 
@@ -61,7 +61,7 @@ pyplot.imsave("img/image_wireframe.png", render_wireframe(viewport, 4000, 4000))
 print(f"Done — saved wireframe.png in {time() - t:.3f} seconds")
 
 print("Rendering image:")
-r, d_b = render(viewport, 800, 800, post_process=post_process)
+r, d_b = render(viewport, 800, 800, post_process=post_process, tile_size=32)
 
 # Build a UV visualisation image from G-buffer channels 4 and 5
 uv = np.zeros((len(d_b), len(d_b[0]), 3))
